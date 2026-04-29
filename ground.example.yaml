@@ -1,0 +1,43 @@
+# ground configuration example
+# Copy to ground.yaml and fill in your values.
+# ground.yaml is in .gitignore — never commit real AWS account IDs.
+
+org:
+  name: "My Research University"
+  region: us-east-1
+  management_account_id: "123456789012"
+  audit_email: audit@example.edu
+  logging_email: logging@example.edu
+  workload_ous:
+    - research
+    - sandbox
+
+network:
+  transit_gateway: true
+  cidr_block: "10.0.0.0/8"
+  vpc_endpoints:
+    - s3
+    - ec2
+    - sts
+    - ssm
+    - secretsmanager
+    - kms
+    - logs
+
+identity:
+  identity_center: true
+
+logging:
+  retention_days: 365
+
+security:
+  guardduty: true
+  security_hub: true
+  macie: true
+
+tagging:
+  required_tags:
+    - project
+    - environment
+    - owner
+    - data-classification

@@ -1,0 +1,26 @@
+# Binaries
+/ground
+/dist/
+
+# Go
+*.test
+*.out
+vendor/
+
+# CDK
+cdk.out/
+cdk.context.json
+
+# Config (never commit real configs)
+ground.yaml
+*.override.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

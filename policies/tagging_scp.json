@@ -1,0 +1,73 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyMissingTagProject",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:CreateVolume",
+        "s3:CreateBucket",
+        "rds:CreateDBInstance",
+        "sagemaker:CreateNotebookInstance"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:RequestTag/project": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyMissingTagEnvironment",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:CreateVolume",
+        "s3:CreateBucket",
+        "rds:CreateDBInstance",
+        "sagemaker:CreateNotebookInstance"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:RequestTag/environment": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyMissingTagOwner",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:CreateVolume",
+        "s3:CreateBucket",
+        "rds:CreateDBInstance",
+        "sagemaker:CreateNotebookInstance"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:RequestTag/owner": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyMissingTagDataClassification",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:CreateVolume",
+        "s3:CreateBucket",
+        "rds:CreateDBInstance",
+        "sagemaker:CreateNotebookInstance"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:RequestTag/data-classification": "true"
+        }
+      }
+    }
+  ]
+}
