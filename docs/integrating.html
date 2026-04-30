@@ -169,16 +169,21 @@ aws organizations move-account \
           <pre><code><span class="cm"># Export ground deployment metadata</span>
 <span class="ground">ground</span> export-metadata --output ground-meta.json
 
-<span class="cm"># ground-meta.json:</span>
+<span class="cm"># ground-meta.json (current schema):</span>
 <span class="cm"># {</span>
 <span class="cm">#   "ground_version": "0.3.0",</span>
 <span class="cm">#   "region": "us-east-1",</span>
 <span class="cm">#   "cloudtrail_enabled": true,</span>
 <span class="cm">#   "config_enabled": true,</span>
-<span class="cm">#   "guardduty_enabled": true,</span>
-<span class="cm">#   "security_hub_enabled": true,</span>
-<span class="cm">#   "identity_center_instance_arn": "arn:aws:sso:::instance/ssoins-xxxx"</span>
+<span class="cm">#   "identity_center_instance_arn": "arn:aws:sso:::instance/ssoins-xxxx",</span>
+<span class="cm">#   "external_services": [</span>
+<span class="cm">#     { "name": "globus", "vendor": "Globus", "category": "data-transfer",</span>
+<span class="cm">#       "features": ["baa","high-assurance"] }</span>
+<span class="cm">#   ],</span>
+<span class="cm">#   "probe_results": {}</span>
 <span class="cm"># }</span>
+<span class="cm"># Note: guardduty_enabled and security_hub_enabled are NOT present —</span>
+<span class="cm"># ground does not deploy detection services. Run 'attest apply' to enable them.</span>
 
 <span class="cm"># Pass to attest in the next pipeline stage</span>
 <span class="attest">attest</span> init --region us-east-1 --ground-meta ground-meta.json</code></pre>

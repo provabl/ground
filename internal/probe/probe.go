@@ -19,6 +19,13 @@
 //
 // If a probe exits non-zero, ground falls back to the declaration and records
 // the verification status in ground-meta.json.
+//
+// Security note on probe paths:
+//   - svc.Name must match ^[a-z0-9][a-z0-9-]{0,62}$ — prevents path components
+//     from being injected into the convention binary name.
+//   - svc.Probe must be an absolute path (starts with /) or empty.
+//     Relative paths are rejected outright. Empty uses the convention name
+//     "ground-probe-<svc.Name>" resolved via PATH.
 package probe
 
 import (
@@ -27,19 +34,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/provabl/ground/internal/config"
 )
 
+// validProbeServiceName restricts service names used to construct the convention
+// binary name "ground-probe-<name>". Allows lowercase alphanumeric and hyphens only,
+// preventing path traversal via embedded slashes or shell metacharacters.
+var validProbeServiceName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
 // ProbeResult is the JSON structure written by a probe binary to stdout.
 type ProbeResult struct {
-	Service             string         `json:"service"`
-	ProbedAt            time.Time      `json:"probed_at"`
-	FeaturesVerified    []string       `json:"features_verified,omitempty"`
-	FeaturesUnverified  []string       `json:"features_unverified,omitempty"`
-	Details             map[string]any `json:"details,omitempty"` // service-specific discovery data
-	Error               string         `json:"error,omitempty"`   // set if probe failed non-fatally
+	Service            string         `json:"service"`
+	ProbedAt           time.Time      `json:"probed_at"`
+	FeaturesVerified   []string       `json:"features_verified,omitempty"`
+	FeaturesUnverified []string       `json:"features_unverified,omitempty"`
+	Details            map[string]any `json:"details,omitempty"` // service-specific discovery data
+	Error              string         `json:"error,omitempty"`   // set if probe failed non-fatally
 }
 
 // Run invokes the probe binary for the given service and returns the result.
@@ -47,23 +61,35 @@ type ProbeResult struct {
 // Returns an error only for hard failures (binary not found, JSON decode error).
 // Partial verification (exit 1) is returned as a ProbeResult with FeaturesUnverified populated.
 func Run(ctx context.Context, svc config.ExternalService) (*ProbeResult, error) {
-	if svc.Probe == "" {
+	if svc.Probe == "" && svc.Name == "" {
 		return nil, nil
 	}
 
-	binary := svc.Probe
-	// If not an absolute path, resolve from PATH using convention ground-probe-<name>.
-	if binary[0] != '/' {
-		resolved, err := exec.LookPath(binary)
+	// Validate service name before using it to construct the convention binary name.
+	if !validProbeServiceName.MatchString(svc.Name) {
+		return nil, fmt.Errorf("probe: service name %q must be lowercase alphanumeric + hyphens (got invalid characters)", svc.Name)
+	}
+
+	var binary string
+
+	if svc.Probe == "" {
+		// No explicit probe path — use the convention name via PATH.
+		convention := "ground-probe-" + svc.Name
+		resolved, err := exec.LookPath(convention)
 		if err != nil {
-			// Try the convention name as a fallback.
-			convention := "ground-probe-" + svc.Name
-			resolved, err = exec.LookPath(convention)
-			if err != nil {
-				return nil, fmt.Errorf("probe binary %q not found in PATH (also tried %s)", svc.Probe, convention)
-			}
+			return nil, fmt.Errorf("probe binary %s not found in PATH", convention)
 		}
 		binary = resolved
+	} else {
+		// Explicit probe path must be absolute. Relative paths are rejected to
+		// prevent execution of unintended binaries from the current directory or
+		// PATH lookup of arbitrary operator-supplied strings.
+		if !strings.HasPrefix(svc.Probe, "/") {
+			return nil, fmt.Errorf("probe path %q must be an absolute path (starting with /) — "+
+				"use an empty probe field to use the ground-probe-%s convention via PATH",
+				svc.Probe, svc.Name)
+		}
+		binary = svc.Probe
 	}
 
 	configJSON, err := json.Marshal(svc.ProbeConfig)
@@ -71,7 +97,7 @@ func Run(ctx context.Context, svc config.ExternalService) (*ProbeResult, error) 
 		return nil, fmt.Errorf("marshal probe config: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, binary) // #nosec G204 — operator-controlled probe path from ground.yaml
+	cmd := exec.CommandContext(ctx, binary) // #nosec G204 — validated: absolute path or PATH-resolved convention binary
 	cmd.Stdin = bytes.NewReader(configJSON)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
