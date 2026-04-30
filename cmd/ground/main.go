@@ -12,6 +12,8 @@ import (
 
 	"encoding/json"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/provabl/ground/internal/deploy"
 	"github.com/provabl/ground/internal/iac"
 	"github.com/provabl/ground/internal/stack/accounts"
@@ -150,6 +152,25 @@ func runDeploy(configPath, region string, dryRun bool) error {
 	accountsTmpl, _ := accountsStack.Template()
 	identityTmpl, _ := identityStack.Template()
 
+	// Inject OrgRootId parameter into accounts template.
+	// This avoids a Lambda custom resource — ground discovers it via Organizations API.
+	if accountsTmpl != nil && accountsTmpl.Parameters != nil {
+		if _, hasRootParam := accountsTmpl.Parameters["OrgRootId"]; hasRootParam {
+			rootID, rootErr := fetchOrgRootID(context.Background(), cfg.Org.Region)
+			if rootErr != nil {
+				fmt.Printf("  ⚠ Could not auto-discover org root ID: %v\n", rootErr)
+				fmt.Println("  Retrieve manually: aws organizations list-roots --query 'Roots[0].Id' --output text")
+				fmt.Println("  Then set org.root_id in ground.yaml")
+			} else if rootID != "" {
+				// Override the default value so it's pre-filled in the template.
+				if p, ok := accountsTmpl.Parameters["OrgRootId"].(map[string]any); ok {
+					p["Default"] = rootID
+				}
+				fmt.Printf("  Org root ID: %s\n", rootID)
+			}
+		}
+	}
+
 	if dryRun {
 		fmt.Println("Dry run — no changes will be made.")
 		fmt.Printf("Organization: %s (region: %s)\n\n", cfg.Org.Name, cfg.Org.Region)
@@ -275,6 +296,27 @@ func runStatus(region string) error {
 		}
 	}
 	return nil
+}
+
+// fetchOrgRootID retrieves the AWS Organizations root ID using the SDK.
+// Returns "" if Organizations is not accessible (non-fatal — caller handles).
+func fetchOrgRootID(ctx context.Context, region string) (string, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	if err != nil {
+		return "", fmt.Errorf("load AWS config: %w", err)
+	}
+	client := organizations.NewFromConfig(cfg)
+	out, err := client.ListRoots(ctx, &organizations.ListRootsInput{})
+	if err != nil {
+		return "", fmt.Errorf("list org roots: %w", err)
+	}
+	if len(out.Roots) == 0 {
+		return "", fmt.Errorf("no org roots found")
+	}
+	if out.Roots[0].Id == nil {
+		return "", fmt.Errorf("root ID is nil")
+	}
+	return *out.Roots[0].Id, nil
 }
 
 func runGenerateIaC(configPath, format string) error {

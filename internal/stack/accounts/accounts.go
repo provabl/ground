@@ -6,6 +6,16 @@
 // Deploys: Security, Infrastructure, Research, Sensitive Research, and
 // DoD/CMMC OUs with sub-OUs for NIH Genomic, HIPAA Research, and CUI.
 // Each OU gets the correct ground:tier tag for attest auto-discovery.
+//
+// The org root ID is passed as a CloudFormation parameter (OrgRootId).
+// Retrieve it before deploying:
+//
+//	aws organizations list-roots --query 'Roots[0].Id' --output text
+//	# Returns something like: r-abcd
+//
+// Then deploy:
+//
+//	ground deploy  (auto-discovers root ID from Organizations API)
 package accounts
 
 import (
@@ -27,63 +37,68 @@ func New(cfg *config.OrgConfig) *Stack {
 func (s *Stack) StackName() string { return "ground-accounts" }
 
 // Template generates the CloudFormation template for the OU hierarchy.
-// The org root ID is resolved at deploy time via a custom resource — the
-// management account ID is known but the root ID requires an API call.
+// Uses a Parameter (OrgRootId) rather than a Lambda custom resource —
+// ground deploy auto-populates this from the Organizations API, and
+// operators can also pass it explicitly with --org-root-id.
 func (s *Stack) Template() (*cfn.Template, error) {
 	managedTags := []map[string]string{
 		cfn.Tag("managed-by", "ground"),
 		cfn.Tag("ground:version", "0.2.0"),
 	}
 
+	// Use the management account ID from config as the default, but the
+	// root ID comes from the deployment context (injected by runDeploy).
+	rootIDRef := map[string]string{"Ref": "OrgRootId"}
+
 	return &cfn.Template{
 		AWSTemplateFormatVersion: "2010-09-09",
 		Description:              "ground: OU hierarchy — Security, Infrastructure, Research, Sensitive Research, DoD/CMMC",
 
-		Resources: map[string]any{
+		Parameters: map[string]any{
+			"OrgRootId": map[string]any{
+				"Type":        "String",
+				"Description": "AWS Organizations root ID (e.g., r-abcd). Retrieve with: aws organizations list-roots --query 'Roots[0].Id' --output text",
+				"AllowedPattern": "^r-[a-z0-9]{4,32}$",
+			},
+		},
 
-			// Discover org root ID at deploy time.
-			"OrgRootLookup": cfn.Resource("AWS::CloudFormation::CustomResource", map[string]any{
-				"ServiceToken": map[string]any{
-					"Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:ground-org-root-lookup",
-				},
-			}),
+		Resources: map[string]any{
 
 			// ── Top-level OUs ──────────────────────────────────────────────────
 			"SecurityOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "Security",
-				"ParentId": map[string]any{"Fn::GetAtt": []string{"OrgRootLookup", "RootId"}},
+				"ParentId": rootIDRef,
 				"Tags":     append(managedTags, cfn.Tag("ground:tier", "security")),
 			}),
 
 			"InfrastructureOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "Infrastructure",
-				"ParentId": map[string]any{"Fn::GetAtt": []string{"OrgRootLookup", "RootId"}},
+				"ParentId": rootIDRef,
 				"Tags":     append(managedTags, cfn.Tag("ground:tier", "infrastructure")),
 			}),
 
 			"ResearchOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "Research",
-				"ParentId": map[string]any{"Fn::GetAtt": []string{"OrgRootLookup", "RootId"}},
+				"ParentId": rootIDRef,
 				"Tags":     append(managedTags, cfn.Tag("ground:tier", "research")),
 			}),
 
 			"SensitiveResearchOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "SensitiveResearch",
-				"ParentId": map[string]any{"Fn::GetAtt": []string{"OrgRootLookup", "RootId"}},
+				"ParentId": rootIDRef,
 				"Tags":     append(managedTags, cfn.Tag("ground:tier", "sensitive")),
 			}),
 
 			"DoDCMMCOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "DoD-CMMC",
-				"ParentId": map[string]any{"Fn::GetAtt": []string{"OrgRootLookup", "RootId"}},
+				"ParentId": rootIDRef,
 				"Tags":     append(managedTags, cfn.Tag("ground:tier", "dod")),
 			}),
 
 			// ── Sensitive Research sub-OUs ─────────────────────────────────────
-			// NIH Genomic Enclave: 800-171 + NIH GDS + optional HIPAA
 			"NIHGenomicOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "NIHGenomic",
-				"ParentId": map[string]any{"Ref": "SensitiveResearchOU"},
+				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
 				"Tags": append(managedTags,
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "genomic"),
@@ -91,10 +106,9 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"DependsOn": "SensitiveResearchOU",
 			}),
 
-			// HIPAA Research: HIPAA Security Rule + AWS BAA required
 			"HIPAAResearchOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "HIPAAResearch",
-				"ParentId": map[string]any{"Ref": "SensitiveResearchOU"},
+				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
 				"Tags": append(managedTags,
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "phi"),
@@ -102,10 +116,9 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"DependsOn": "SensitiveResearchOU",
 			}),
 
-			// CUI Research: 800-171 for non-DoD federal CUI
 			"CUIResearchOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "CUIResearch",
-				"ParentId": map[string]any{"Ref": "SensitiveResearchOU"},
+				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
 				"Tags": append(managedTags,
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "cui"),
