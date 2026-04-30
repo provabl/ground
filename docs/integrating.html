@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Integrating ground with existing infrastructure</title>
+  <meta name="description" content="How to use ground alongside an existing AWS organization — brownfield deployment, partial stacks, and attest-only mode.">
+  <meta name="theme-color" content="#f8fafc">
+  <script>(function(){var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t);}());</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <nav class="nav" role="navigation" aria-label="Main navigation">
+    <div class="nav-container">
+      <div class="nav-brand-group">
+        <a href="https://provabl.dev" class="nav-suite">provabl</a>
+        <span class="nav-sep" aria-hidden="true">/</span>
+        <a href="index.html" class="nav-product product-blue">ground</a>
+      </div>
+      <div class="nav-links" id="nav-links">
+        <a href="index.html#install">Install</a>
+        <a href="index.html#what-it-deploys">What it deploys</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="customizing.html">Customizing</a>
+        <a href="integrating.html" style="color:var(--accent);font-weight:700;">Integrating</a>
+        <a href="https://github.com/provabl/ground" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <button class="btn-theme" id="theme-toggle" aria-label="Toggle color theme"><span id="theme-icon">🌙</span></button>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main-content">
+    <div class="container">
+      <header class="hero" style="padding:2.5rem 0 2rem;">
+        <div class="hero-eyebrow product-blue-tag">How-to</div>
+        <h1 class="product-blue">Integrating with existing infrastructure</h1>
+        <p class="hero-sub">You don't need a greenfield AWS organization to use the Provabl suite. ground can add compliance foundations to an existing org, and attest can manage an org that ground didn't create.</p>
+      </header>
+
+      <!-- Scenarios -->
+      <section id="scenarios" class="section" aria-labelledby="scen-heading">
+        <h2 id="scen-heading">Three integration scenarios</h2>
+        <div class="deploys-grid">
+          <div class="deploy-card">
+            <h3>1. Greenfield</h3>
+            <p>New AWS organization with no existing workloads. Run <code>ground deploy</code> in full — all four stacks, all OUs. Then hand off to attest.</p>
+            <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">Easiest. Recommended for new SRE deployments.</p>
+          </div>
+          <div class="deploy-card">
+            <h3>2. Brownfield — add ground to existing org</h3>
+            <p>Existing AWS organization with accounts and workloads. Deploy ground stacks alongside — they create new OUs and security services without touching existing accounts.</p>
+            <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">Most common for R1 institutions.</p>
+          </div>
+          <div class="deploy-card">
+            <h3>3. Attest-only</h3>
+            <p>Skip ground entirely. Run <code>attest init</code> against an existing org. attest inventories what's there, identifies gaps, and enforces frameworks — it doesn't require ground.</p>
+            <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">Use when the org already has a managed foundation (LZA, Control Tower, etc.).</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Brownfield -->
+      <section id="brownfield" class="section" aria-labelledby="bf-heading">
+        <h2 id="bf-heading">Brownfield: adding ground to an existing org</h2>
+        <p class="section-intro">If your organization already has accounts and SCPs, ground can be deployed incrementally. The key is that ground stacks are additive — they create new resources, they don't modify or delete existing ones.</p>
+
+        <h3 style="font-size:.95rem;font-weight:700;margin:1.5rem 0 .5rem;">Step 1: Deploy the logging stack only</h3>
+        <p style="font-size:.875rem;color:var(--text-secondary);margin-bottom:.75rem;">Start with logging — it's non-destructive and gives attest what it needs to assess your existing org.</p>
+        <div class="code-block">
+          <pre><code><span class="cm"># Only deploy the logging foundation — no OU changes yet</span>
+<span class="ground">ground</span> deploy --dry-run    <span class="cm"># review what will be created</span>
+<span class="ground">ground</span> deploy              <span class="cm"># creates ground-logging and ground-security stacks</span>
+
+<span class="cm"># Now attest can assess your existing org</span>
+<span class="attest">attest</span> init --region us-east-1
+<span class="attest">attest</span> frameworks add nist-800-171-r2
+<span class="attest">attest</span> scan    <span class="cm"># see gaps in your existing setup</span></code></pre>
+        </div>
+
+        <h3 style="font-size:.95rem;font-weight:700;margin:1.5rem 0 .5rem;">Step 2: Move accounts to ground OUs (optional)</h3>
+        <p style="font-size:.875rem;color:var(--text-secondary);margin-bottom:.75rem;">Once the logging and security stacks are in place, deploy the accounts stack to create ground OUs. Then move existing accounts into them at your own pace — accounts inherit SCPs on move, so test with non-production accounts first.</p>
+        <div class="code-block">
+          <pre><code><span class="cm"># Deploy accounts stack to create OUs (no accounts moved yet)</span>
+<span class="ground">ground</span> status   <span class="cm"># see what's deployed: ground-accounts stack</span>
+
+<span class="cm"># Move an account into a ground OU using the AWS CLI</span>
+aws organizations move-account \
+  --account-id 123456789012 \
+  --source-parent-id r-xxxx \
+  --destination-parent-id ou-xxxx-yyyyyyyy   <span class="cm"># ground OU ID from stack output</span>
+
+<span class="cm"># Verify SCPs inherited correctly</span>
+<span class="attest">attest</span> scan    <span class="cm"># posture should improve as accounts move into correct OUs</span></code></pre>
+        </div>
+
+        <div class="does-not" style="margin-top:1rem;">
+          <h3>What to watch for in brownfield deployments</h3>
+          <ul>
+            <li><strong>Existing SCPs</strong> — ground SCPs will coexist with your existing ones. The 5-SCP-per-target limit applies to the sum of all SCPs on a target. Check <code>attest preflight</code> before applying compiled SCPs.</li>
+            <li><strong>Existing CloudTrail</strong> — ground creates a new org-wide trail. If you already have one, configure <code>logging.bucket_name</code> to use the existing audit bucket instead of creating a new one.</li>
+            <li><strong>Identity Center</strong> — if IAM Identity Center is already configured, set <code>identity.instance_arn</code> in <code>ground.yaml</code> to deploy permission sets into your existing instance.</li>
+            <li><strong>SCP conflicts</strong> — run <code>attest compile --dry-run</code> and review the conflict report before <code>attest apply</code> on a brownfield org.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Attest-only -->
+      <section id="attest-only" class="section" aria-labelledby="ao-heading">
+        <h2 id="ao-heading">Attest-only: skip ground entirely</h2>
+        <p class="section-intro">attest doesn't require ground. If your org was set up with AWS Control Tower, Landing Zone Accelerator, or another managed foundation, you can run attest directly against it.</p>
+
+        <div class="code-block">
+          <pre><code><span class="cm"># Skip ground — run attest directly against your existing org</span>
+<span class="attest">attest</span> init --region us-east-1
+
+<span class="cm"># attest will check prerequisites and warn about any gaps:</span>
+<span class="cm">#   ✓ CloudTrail org-wide trail: active</span>
+<span class="cm">#   ✓ AWS Config: active</span>
+<span class="cm">#   ⚠ GuardDuty: not enabled in all accounts</span>
+<span class="cm">#   ✓ IAM Identity Center: detected (added to SSP boundary)</span>
+
+<span class="attest">attest</span> frameworks add nist-800-171-r2 hipaa
+<span class="attest">attest</span> compile --scp-strategy merged
+<span class="attest">attest</span> apply --approve
+<span class="attest">attest</span> scan</code></pre>
+        </div>
+
+        <p class="section-intro">The attest prerequisite validation report tells you exactly what's missing and how to fix it — either manually or by deploying the relevant ground stack.</p>
+      </section>
+
+      <!-- LZA / Control Tower -->
+      <section id="existing-frameworks" class="section" aria-labelledby="lza-heading">
+        <h2 id="lza-heading">Alongside AWS Control Tower or LZA</h2>
+        <p class="section-intro">ground and attest are designed to work alongside AWS managed foundations. The key principle: ground doesn't touch resources it didn't create.</p>
+
+        <div class="deploys-grid">
+          <div class="deploy-card">
+            <h3>AWS Control Tower</h3>
+            <p>Control Tower manages the OU hierarchy and baseline guardrails. Use ground only for the stacks Control Tower doesn't cover — typically logging augmentation and the Sensitive Research / DoD OUs.</p>
+            <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">Set <code>org.management_account_id</code> and skip <code>ground deploy accounts</code> if Control Tower owns the OU structure.</p>
+          </div>
+          <div class="deploy-card">
+            <h3>Landing Zone Accelerator (LZA)</h3>
+            <p>LZA is more customizable than Control Tower. ground can complement it by adding the Sensitive Research and DoD/CMMC OU tiers that LZA's research configurations don't include by default.</p>
+            <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">Use <code>ground deploy --output terraform</code> and merge the HCL into your LZA pipeline.</p>
+          </div>
+          <div class="deploy-card">
+            <h3>Existing Terraform / CDK</h3>
+            <p>Export ground as Terraform or CDK and import the resources into your existing state. Ground's IaC output is standard — <code>aws_organizations_organizational_unit</code>, <code>aws_ssoadmin_permission_set</code>, etc.</p>
+            <div class="code-block" style="margin-top:0.75rem;">
+              <pre><code><span class="ground">ground</span> deploy --output terraform
+<span class="cm"># merge ground-terraform/main.tf into your IaC</span></code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ground export-metadata -->
+      <section id="metadata" class="section" aria-labelledby="meta-heading">
+        <h2 id="meta-heading">Handing off to attest</h2>
+        <p class="section-intro">After ground deploy, export metadata for attest to consume. This allows <code>attest init</code> to skip live AWS prerequisite checks — useful in CI/CD pipelines where ground and attest run in separate stages.</p>
+
+        <div class="code-block">
+          <pre><code><span class="cm"># Export ground deployment metadata</span>
+<span class="ground">ground</span> export-metadata --output ground-meta.json
+
+<span class="cm"># ground-meta.json:</span>
+<span class="cm"># {</span>
+<span class="cm">#   "ground_version": "0.3.0",</span>
+<span class="cm">#   "region": "us-east-1",</span>
+<span class="cm">#   "cloudtrail_enabled": true,</span>
+<span class="cm">#   "config_enabled": true,</span>
+<span class="cm">#   "guardduty_enabled": true,</span>
+<span class="cm">#   "security_hub_enabled": true,</span>
+<span class="cm">#   "identity_center_instance_arn": "arn:aws:sso:::instance/ssoins-xxxx"</span>
+<span class="cm"># }</span>
+
+<span class="cm"># Pass to attest in the next pipeline stage</span>
+<span class="attest">attest</span> init --region us-east-1 --ground-meta ground-meta.json</code></pre>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <div class="container">
+    <footer role="contentinfo">
+      <div class="footer-inner">
+        <div>
+          <div class="footer-suite"><a href="https://provabl.dev">provabl</a> / <span class="product-blue">ground</span></div>
+          <p class="footer-sub">Apache 2.0</p>
+        </div>
+        <nav class="footer-links" aria-label="Suite links">
+          <a href="architecture.html">Architecture</a>
+          <a href="customizing.html">Customizing</a>
+          <a href="https://github.com/provabl/ground">GitHub</a>
+        </nav>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2026 Scott Friedman</span>
+        <span>Apache 2.0</span>
+      </div>
+    </footer>
+  </div>
+  <script>
+  function toggleTheme(){const html=document.documentElement;const next=html.getAttribute('data-theme')==='dark'?'light':'dark';html.setAttribute('data-theme',next);localStorage.setItem('theme',next);document.getElementById('theme-icon').textContent=next==='dark'?'☀️':'🌙';}
+  document.getElementById('theme-toggle').addEventListener('click',toggleTheme);
+  (function(){const t=localStorage.getItem('theme')||'light';document.getElementById('theme-icon').textContent=t==='dark'?'☀️':'🌙';})();
+  const burger=document.querySelector('.hamburger'),links=document.getElementById('nav-links');
+  if(burger&&links){burger.addEventListener('click',()=>{const o=links.classList.toggle('open');burger.setAttribute('aria-expanded',o);});}
+  </script>
+</body>
+</html>

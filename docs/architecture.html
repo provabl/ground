@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture — ground</title>
+  <meta name="description" content="AWS architecture diagrams for the default ground deployment: OU hierarchy, networking, security baseline, and logging.">
+  <meta name="theme-color" content="#f8fafc">
+  <script>(function(){var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t);}());</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    .mermaid { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; margin: 1rem 0; overflow-x: auto; }
+    .diagram-caption { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; font-style: italic; }
+    .arch-note { background: var(--bg-card); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 0.875rem 1.25rem; margin: 1rem 0; font-size: 0.875rem; color: var(--text-secondary); }
+    .arch-note strong { color: var(--text-primary); }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <nav class="nav" role="navigation" aria-label="Main navigation">
+    <div class="nav-container">
+      <div class="nav-brand-group">
+        <a href="https://provabl.dev" class="nav-suite">provabl</a>
+        <span class="nav-sep" aria-hidden="true">/</span>
+        <a href="index.html" class="nav-product product-blue">ground</a>
+      </div>
+      <div class="nav-links" id="nav-links">
+        <a href="index.html#install">Install</a>
+        <a href="index.html#what-it-deploys">What it deploys</a>
+        <a href="index.html#workflow">Workflow</a>
+        <a href="architecture.html" style="color:var(--accent);font-weight:700;">Architecture</a>
+        <a href="customizing.html">Customizing</a>
+        <a href="integrating.html">Integrating</a>
+        <a href="https://github.com/provabl/ground" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <button class="btn-theme" id="theme-toggle" aria-label="Toggle color theme"><span id="theme-icon">🌙</span></button>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main-content">
+    <div class="container">
+      <header class="hero" style="padding:2.5rem 0 2rem;">
+        <div class="hero-eyebrow product-blue-tag">Reference</div>
+        <h1 class="product-blue">Architecture</h1>
+        <p class="hero-sub">Default AWS architecture deployed by <code>ground deploy</code>. Every diagram reflects what the CloudFormation stacks actually create.</p>
+      </header>
+
+      <!-- OU Hierarchy -->
+      <section id="ou-hierarchy" class="section" aria-labelledby="ou-heading">
+        <h2 id="ou-heading">Organization Unit Hierarchy</h2>
+        <p class="section-intro">ground creates a five-tier OU structure. Each tier inherits its parent's SCPs and adds its own restrictions. The management account sits above the root — it runs ground and attest but never hosts research workloads.</p>
+
+        <div class="mermaid">
+graph TD
+    MGMT["🏢 Management Account<br/><i>ground deploy • attest init<br/>no workloads</i>"]
+    ROOT["Root<br/><i>baseline SCPs only</i>"]
+    SEC["Security OU<br/><i>deny: disable CloudTrail/Config<br/>deny: delete audit bucket</i>"]
+    INFRA["Infrastructure OU<br/><i>deny: workload services<br/>allow: TGW, VPC, Route53</i>"]
+    RESEARCH["Research OU<br/><i>allow: FedRAMP Moderate services<br/>deny: public S3 ACLs, non-US regions</i>"]
+    SENSITIVE["Sensitive Research OU<br/><i>+ require KMS encryption<br/>+ require MFA • deny non-FedRAMP</i>"]
+    DOD["DoD/CMMC OU<br/><i>GovCloud only<br/>us-gov-east-1 / us-gov-west-1</i>"]
+
+    LOGARCHIVE["Log Archive<br/><i>S3 audit bucket<br/>immutable, object-locked</i>"]
+    SECTOOLING["Security Tooling<br/><i>GuardDuty findings<br/>Security Hub aggregation</i>"]
+    NETHUB["Network Hub<br/><i>Transit Gateway<br/>VPC endpoints</i>"]
+    NIH["NIH Genomic Enclave<br/><i>attest:data-classes=CUI,GENOMIC</i>"]
+    HIPAA["HIPAA Research<br/><i>attest:data-classes=PHI</i>"]
+    CUI["CUI Research<br/><i>attest:data-classes=CUI</i>"]
+    CMMC["CMMC CUI<br/><i>GovCloud</i>"]
+    ITAR["ITAR/EAR<br/><i>GovCloud • TCP required</i>"]
+
+    MGMT --> ROOT
+    ROOT --> SEC
+    ROOT --> INFRA
+    ROOT --> RESEARCH
+    ROOT --> SENSITIVE
+    ROOT --> DOD
+    SEC --> LOGARCHIVE
+    SEC --> SECTOOLING
+    INFRA --> NETHUB
+    SENSITIVE --> NIH
+    SENSITIVE --> HIPAA
+    SENSITIVE --> CUI
+    DOD --> CMMC
+    DOD --> ITAR
+
+    style MGMT fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    style SEC fill:#fef9c3,stroke:#d97706,color:#44300e
+    style SENSITIVE fill:#fce7f3,stroke:#be185d,color:#4a0020
+    style DOD fill:#f0fdf4,stroke:#15803d,color:#052e16
+    style LOGARCHIVE fill:#fef9c3,stroke:#d97706,color:#44300e
+    style SECTOOLING fill:#fef9c3,stroke:#d97706,color:#44300e
+        </div>
+        <p class="diagram-caption">Figure 1 — Default OU hierarchy. Management account is above the root and never receives SCPs. Log Archive and Security Tooling accounts are in scope for every CUI/PHI assessment as security protection assets.</p>
+
+        <div class="arch-note">
+          <strong>Compliance scope note:</strong> The Log Archive account is <em>in scope</em> for any compliance assessment that touches CUI or PHI, because it stores audit logs for those accounts. attest automatically adds it to the SSP system boundary when it detects the ground-accounts CloudFormation stack.
+        </div>
+      </section>
+
+      <!-- Networking -->
+      <section id="networking" class="section" aria-labelledby="net-heading">
+        <h2 id="net-heading">Network Architecture (Phase 2)</h2>
+        <p class="section-intro">The network stack uses a hub-and-spoke model. The Network Hub account owns the Transit Gateway; spoke VPCs in each research account peer to it. All AWS service API calls route through VPC endpoints — no traffic leaves the VPC boundary.</p>
+
+        <div class="mermaid">
+graph LR
+    subgraph "Network Hub Account"
+        TGW["Transit Gateway<br/><i>us-east-1 • us-west-2</i>"]
+        VPE["VPC Endpoints<br/><i>s3 • ec2 • ssm • sts<br/>secretsmanager • kms</i>"]
+    end
+
+    subgraph "Sensitive Research Account"
+        SVPC["Research VPC<br/><i>10.1.0.0/16</i>"]
+        SPRIV["Private Subnet<br/><i>compute zone</i>"]
+        SMGMT["Management Subnet<br/><i>head node / bastion</i>"]
+        SSTOR["Storage Subnet<br/><i>S3 endpoint</i>"]
+    end
+
+    subgraph "Open Research Account"
+        OVPC["Research VPC<br/><i>10.2.0.0/16</i>"]
+    end
+
+    Internet["Internet<br/><i>VPN / Direct Connect only</i>"]
+
+    TGW <-->|"VPC attachment"| SVPC
+    TGW <-->|"VPC attachment"| OVPC
+    VPE ---|"org condition<br/>aws:PrincipalOrgID"| SVPC
+    SVPC --> SPRIV
+    SVPC --> SMGMT
+    SVPC --> SSTOR
+    Internet -.->|"no direct route<br/>to private subnets"| TGW
+
+    style TGW fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    style VPE fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    style SMGMT fill:#fce7f3,stroke:#be185d,color:#4a0020
+        </div>
+        <p class="diagram-caption">Figure 2 — Hub-and-spoke networking. All VPC endpoint policies include <code>aws:PrincipalOrgID</code> conditions, verified by ground's policy unit tests before deployment.</p>
+
+        <div class="arch-note">
+          <strong>Head node scope (NIST 800-223):</strong> The management subnet hosts the Slurm/ParallelCluster head node. Per NIST SP 800-223, privileged access to the head node equals CUI access by definition — it must be in the CUI account with phishing-resistant MFA required for all admin sessions.
+        </div>
+      </section>
+
+      <!-- Security Baseline -->
+      <section id="security" class="section" aria-labelledby="sec-heading">
+        <h2 id="sec-heading">Security Baseline (Phase 1)</h2>
+        <p class="section-intro">The security stack enables three AWS detection services across the entire organization. Unlike most templates that ship these disabled, ground turns them on by default — you can opt out, but the burden is explicit.</p>
+
+        <div class="mermaid">
+graph TD
+    subgraph "ground deploy — security stack"
+        GD["GuardDuty<br/><i>org-wide detector<br/>all data sources enabled<br/>findings → Security Tooling</i>"]
+        SH["Security Hub<br/><i>org-wide<br/>NIST 800-53 Rev 5 standard<br/>findings aggregated</i>"]
+        MACIE["Macie<br/><i>org-wide session<br/>PII/PHI discovery<br/>15-min publish frequency</i>"]
+    end
+
+    subgraph "ground deploy — logging stack"
+        CT["CloudTrail<br/><i>org-wide multi-region trail<br/>data events: S3 objects<br/>log validation enabled</i>"]
+        CONFIG["AWS Config<br/><i>org-wide recorder<br/>all resource types<br/>24h delivery</i>"]
+        AUDIT["S3 Audit Bucket<br/><i>KMS encrypted<br/>object-locked (GOVERNANCE)<br/>365-day retention</i>"]
+    end
+
+    subgraph "attest reads"
+        SCAN["attest scan<br/><i>reads Config rules<br/>reads Security Hub<br/>computes posture</i>"]
+    end
+
+    CT -->|"logs to"| AUDIT
+    CONFIG -->|"delivers to"| AUDIT
+    GD -->|"findings to"| SH
+    SH --> SCAN
+    CONFIG --> SCAN
+
+    style GD fill:#fef9c3,stroke:#d97706,color:#44300e
+    style SH fill:#fef9c3,stroke:#d97706,color:#44300e
+    style MACIE fill:#fef9c3,stroke:#d97706,color:#44300e
+    style CT fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    style CONFIG fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    style AUDIT fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    style SCAN fill:#dcfce7,stroke:#15803d,color:#052e16
+        </div>
+        <p class="diagram-caption">Figure 3 — Security baseline and logging. attest reads Config rules and Security Hub findings during <code>attest scan</code> to compute compliance posture. The audit bucket is the ground truth for all audit evidence.</p>
+      </section>
+
+      <!-- IAM / Identity Center -->
+      <section id="identity" class="section" aria-labelledby="id-heading">
+        <h2 id="id-heading">IAM Identity Center &amp; Permission Boundaries</h2>
+        <p class="section-intro">ground deploys five permission sets in IAM Identity Center, tiered by OU. The sensitive-researcher set enforces FIDO2-only MFA — standard TOTP is not accepted for CUI/PHI environments.</p>
+
+        <div class="mermaid">
+graph LR
+    subgraph "IAM Identity Center"
+        AU["GroundUser<br/><i>Research OU<br/>MFA required<br/>1-hour session</i>"]
+        SU["GroundSensitiveUser<br/><i>Sensitive Research OU<br/>FIDO2 only • IP allowlist<br/>1-hour session</i>"]
+        ADMIN["GroundSREAdmin<br/><i>all OUs<br/>phishing-resistant MFA<br/>all sessions logged</i>"]
+        CO["GroundComplianceOfficer<br/><i>attest + compliance tooling<br/>4-hour session</i>"]
+        AUD["GroundAuditor<br/><i>read-only<br/>8-hour session</i>"]
+    end
+
+    subgraph "Every IAM Role"
+        PB["Permission Boundary<br/><i>Deny: privilege escalation<br/>Deny: org escape<br/>Deny: logging disable<br/>Deny: boundary removal</i>"]
+    end
+
+    AU -->|"assigned to"| PB
+    SU -->|"assigned to"| PB
+    ADMIN -->|"assigned to"| PB
+
+    style SU fill:#fce7f3,stroke:#be185d,color:#4a0020
+    style ADMIN fill:#fef9c3,stroke:#d97706,color:#44300e
+    style PB fill:#fee2e2,stroke:#dc2626,color:#450a0a
+        </div>
+        <p class="diagram-caption">Figure 4 — Permission sets and boundaries. The permission boundary on every IAM role is Deny-scoped (not Allow * which would be a no-op). Verified by policy unit tests before deploy.</p>
+      </section>
+
+      <!-- Tagging -->
+      <section id="tagging" class="section" aria-labelledby="tag-heading">
+        <h2 id="tag-heading">Account Tagging Strategy</h2>
+        <p class="section-intro">ground tags every account with <code>attest:*</code> tags at creation time. attest reads these during <code>attest init</code> to auto-discover environments and their compliance scope.</p>
+
+        <div class="code-block">
+          <div class="code-titlebar" aria-hidden="true">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="code-label">AWS account tags set by ground on every account</span>
+          </div>
+          <pre><code>attest:environment-id   = "chen-quantum-lab"       # unique env identifier
+attest:data-classes     = "CUI,GENOMIC"             # drives OU placement + SCP set
+attest:compliance-tier  = "sensitive"               # open | sensitive | dod
+attest:ou-path          = "/SensitiveResearch/"     # for SSP system boundary
+attest:owner            = "pi@mru.edu"              # PI or team contact</code></pre>
+        </div>
+        <p class="section-intro" style="margin-top:0.75rem;">
+          Tag enforcement SCP denies <code>ec2:RunInstances</code>, <code>s3:CreateBucket</code>, and other resource-creation actions unless all five tags are present — using per-tag OR logic (separate Deny statements), so a missing <em>single</em> tag triggers a deny.
+        </p>
+      </section>
+
+    </div>
+  </main>
+
+  <div class="container">
+    <footer role="contentinfo">
+      <div class="footer-inner">
+        <div>
+          <div class="footer-suite"><a href="https://provabl.dev">provabl</a> / <span class="product-blue">ground</span></div>
+          <p class="footer-sub">Apache 2.0</p>
+        </div>
+        <nav class="footer-links" aria-label="Suite navigation">
+          <a href="https://attest.provabl.dev">attest</a>
+          <a href="https://qualify.provabl.dev">qualify</a>
+          <a href="https://vet.provabl.dev">vet</a>
+          <a href="https://github.com/provabl/ground">GitHub</a>
+        </nav>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2026 Scott Friedman</span>
+        <span>Apache 2.0</span>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+  mermaid.initialize({ startOnLoad: true, theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default', flowchart: { curve: 'basis' } });
+  function toggleTheme() {
+    const html = document.documentElement;
+    const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    html.classList.add('theme-transitioning');
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    document.getElementById('theme-icon').textContent = next === 'dark' ? '☀️' : '🌙';
+    setTimeout(() => html.classList.remove('theme-transitioning'), 250);
+    mermaid.initialize({ startOnLoad: false, theme: next === 'dark' ? 'dark' : 'default' });
+    document.querySelectorAll('.mermaid').forEach(el => { el.removeAttribute('data-processed'); });
+    mermaid.run();
+  }
+  document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+  (function(){ const t=localStorage.getItem('theme')||'light'; document.getElementById('theme-icon').textContent=t==='dark'?'☀️':'🌙'; })();
+  const burger=document.querySelector('.hamburger'), links=document.getElementById('nav-links');
+  if(burger&&links){burger.addEventListener('click',()=>{const o=links.classList.toggle('open');burger.setAttribute('aria-expanded',o);});}
+  </script>
+</body>
+</html>

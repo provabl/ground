@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Customizing ground</title>
+  <meta name="description" content="How to customize ground deployments: ground.yaml reference, selecting stacks, output formats, and configuration options.">
+  <meta name="theme-color" content="#f8fafc">
+  <script>(function(){var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t);}());</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <nav class="nav" role="navigation" aria-label="Main navigation">
+    <div class="nav-container">
+      <div class="nav-brand-group">
+        <a href="https://provabl.dev" class="nav-suite">provabl</a>
+        <span class="nav-sep" aria-hidden="true">/</span>
+        <a href="index.html" class="nav-product product-blue">ground</a>
+      </div>
+      <div class="nav-links" id="nav-links">
+        <a href="index.html#install">Install</a>
+        <a href="index.html#what-it-deploys">What it deploys</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="customizing.html" style="color:var(--accent);font-weight:700;">Customizing</a>
+        <a href="integrating.html">Integrating</a>
+        <a href="https://github.com/provabl/ground" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <button class="btn-theme" id="theme-toggle" aria-label="Toggle color theme"><span id="theme-icon">🌙</span></button>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main-content">
+    <div class="container">
+      <header class="hero" style="padding:2.5rem 0 2rem;">
+        <div class="hero-eyebrow product-blue-tag">How-to</div>
+        <h1 class="product-blue">Customizing ground</h1>
+        <p class="hero-sub">All ground behaviour is driven by <code>ground.yaml</code>. Start with the example, adjust for your institution, and use <code>ground deploy --dry-run</code> to preview before applying.</p>
+      </header>
+
+      <!-- ground.yaml reference -->
+      <section id="config-reference" class="section" aria-labelledby="config-heading">
+        <h2 id="config-heading">ground.yaml full reference</h2>
+        <p class="section-intro">Copy <code>ground.example.yaml</code> and fill in the required fields. Everything else has sensible defaults.</p>
+
+        <div class="code-block">
+          <div class="code-titlebar" aria-hidden="true">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="code-label">ground.yaml — full reference with defaults</span>
+          </div>
+          <pre><code><span class="cm"># REQUIRED ─────────────────────────────────────────────────────────</span>
+org:
+  name: "My Research University"          <span class="cm"># human name for SSP/reports</span>
+  region: us-east-1                       <span class="cm"># primary deployment region</span>
+  management_account_id: "123456789012"   <span class="cm"># management account (required)</span>
+  audit_email: audit@example.edu          <span class="cm"># Log Archive account email</span>
+  logging_email: logging@example.edu      <span class="cm"># optional: separate logging account</span>
+  workload_ous:                           <span class="cm"># custom sub-OUs to create</span>
+    - research
+    - sandbox
+
+<span class="cm"># NETWORKING (Phase 2) ─────────────────────────────────────────────</span>
+network:
+  transit_gateway: true                   <span class="cm"># deploy TGW in Network Hub account</span>
+  cidr_block: "10.0.0.0/8"               <span class="cm"># supernet for all VPCs</span>
+  vpc_endpoints:                          <span class="cm"># services to endpoint-ize</span>
+    - s3
+    - ec2
+    - sts
+    - ssm
+    - secretsmanager
+    - kms
+    - logs
+
+<span class="cm"># IDENTITY ─────────────────────────────────────────────────────────</span>
+identity:
+  identity_center: true                   <span class="cm"># deploy IAM Identity Center</span>
+  instance_arn: ""                        <span class="cm"># set if Identity Center already exists</span>
+
+<span class="cm"># LOGGING ──────────────────────────────────────────────────────────</span>
+logging:
+  retention_days: 365                     <span class="cm"># audit log retention (S3 lifecycle)</span>
+  bucket_name: ""                         <span class="cm"># auto-generated if empty</span>
+
+<span class="cm"># SECURITY ─────────────────────────────────────────────────────────</span>
+security:
+  guardduty: true                         <span class="cm"># enable GuardDuty org-wide</span>
+  security_hub: true                      <span class="cm"># enable Security Hub + NIST 800-53</span>
+  macie: true                             <span class="cm"># enable Macie org-wide</span>
+
+<span class="cm"># TAGGING ──────────────────────────────────────────────────────────</span>
+tagging:
+  required_tags:                          <span class="cm"># per-tag OR logic SCPs</span>
+    - project
+    - environment
+    - owner
+    - data-classification</code></pre>
+        </div>
+      </section>
+
+      <!-- Selective deployment -->
+      <section id="selective" class="section" aria-labelledby="sel-heading">
+        <h2 id="sel-heading">Deploying individual stacks</h2>
+        <p class="section-intro">ground deploy runs all four stacks in sequence. If you only need certain layers — or want to deploy incrementally — you can target stacks individually using the AWS CLI or your IaC output.</p>
+
+        <div class="code-block">
+          <pre><code><span class="cm"># Deploy only the logging foundation (minimum for attest to work)</span>
+<span class="ground">ground</span> deploy --dry-run <span class="cm"># shows all 4 stacks</span>
+
+<span class="cm"># Generate Terraform or CDK and apply selectively</span>
+<span class="ground">ground</span> deploy --output terraform
+cd ground-terraform
+
+<span class="cm"># Apply only the logging and security resources</span>
+terraform apply -target=aws_cloudformation_stack.ground_logging \
+                -target=aws_cloudformation_stack.ground_security</code></pre>
+        </div>
+
+        <div class="deploys-grid" style="margin-top:1.25rem;">
+          <div class="deploy-card">
+            <h3>Minimum viable (for attest)</h3>
+            <p>Deploy only <strong>logging</strong> and <strong>security</strong> stacks. This gives attest what it needs to run <code>attest scan</code> and assess posture — CloudTrail, Config, GuardDuty, Security Hub.</p>
+            <div class="code-block" style="margin-top:0.75rem;">
+              <pre><code><span class="ground">ground</span> deploy
+<span class="cm"># then skip accounts + identity if not ready</span></code></pre>
+            </div>
+          </div>
+          <div class="deploy-card">
+            <h3>IaC output modes</h3>
+            <p>ground generates CloudFormation (default), Terraform HCL, or CDK TypeScript. The CloudFormation path deploys directly; Terraform and CDK generate artifacts for you to apply with your existing toolchain.</p>
+            <div class="code-block" style="margin-top:0.75rem;">
+              <pre><code><span class="ground">ground</span> deploy --output cloudformation  <span class="cm"># default</span>
+<span class="ground">ground</span> deploy --output terraform        <span class="cm"># → ground-terraform/</span>
+<span class="ground">ground</span> deploy --output cdk             <span class="cm"># → ground-cdk/</span></code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Disable services -->
+      <section id="disable" class="section" aria-labelledby="dis-heading">
+        <h2 id="dis-heading">Disabling services</h2>
+        <p class="section-intro">Set any security service to <code>false</code> to skip it. Be aware of the compliance implications — disabling GuardDuty, for instance, means attest will report that control as a gap during <code>attest scan</code>.</p>
+
+        <div class="code-block">
+          <pre><code><span class="cm"># ground.yaml — disable Macie if not needed for your data types</span>
+security:
+  guardduty: true
+  security_hub: true
+  macie: false     <span class="cm"># skip Macie — attest will flag nist-800-171-r2 3.14.x as partial</span></code></pre>
+        </div>
+
+        <div class="does-not" style="margin-top:1rem;">
+          <h3>Compliance impact of disabling services</h3>
+          <ul>
+            <li>Disabling <strong>GuardDuty</strong> — gap against NIST 800-171 §3.14.7, CMMC SI.L2-3.14.7, HIPAA §164.308(a)(1)</li>
+            <li>Disabling <strong>Security Hub</strong> — attest loses posture data; scan results will be incomplete</li>
+            <li>Disabling <strong>Macie</strong> — gap against HIPAA minimum necessary and some NIH GDS data discovery requirements</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Custom OUs -->
+      <section id="custom-ous" class="section" aria-labelledby="ou-heading">
+        <h2 id="ou-heading">Custom workload OUs</h2>
+        <p class="section-intro">The five default OUs (Security, Infrastructure, Research, Sensitive Research, DoD/CMMC) are always created. Add institution-specific OUs under <code>workload_ous</code>.</p>
+
+        <div class="code-block">
+          <pre><code><span class="cm"># ground.yaml — add institution-specific OUs</span>
+org:
+  workload_ous:
+    - research          <span class="cm"># → /Research/ OU</span>
+    - sandbox           <span class="cm"># → /Research/Sandbox/ sub-OU</span>
+    - hpc-cluster       <span class="cm"># → /SensitiveResearch/HPC/ sub-OU</span></code></pre>
+        </div>
+
+        <p class="section-intro">Custom OUs inherit the SCPs of their parent tier. They are tagged with <code>ground:tier</code> matching their parent, which attest uses for SSP system boundary auto-discovery.</p>
+      </section>
+
+      <!-- Custom tagging -->
+      <section id="custom-tagging" class="section" aria-labelledby="ctag-heading">
+        <h2 id="ctag-heading">Custom required tags</h2>
+        <p class="section-intro">The default tagging SCP enforces five <code>attest:*</code> tags. Add institutional tags to the list — each becomes its own Deny statement (OR logic, not AND).</p>
+
+        <div class="code-block">
+          <pre><code><span class="cm"># ground.yaml — add institutional tags</span>
+tagging:
+  required_tags:
+    - project
+    - environment
+    - owner
+    - data-classification
+    - cost-center        <span class="cm"># institution-specific</span>
+    - grant-number       <span class="cm"># for grant reporting</span></code></pre>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <div class="container">
+    <footer role="contentinfo">
+      <div class="footer-inner">
+        <div>
+          <div class="footer-suite"><a href="https://provabl.dev">provabl</a> / <span class="product-blue">ground</span></div>
+          <p class="footer-sub">Apache 2.0</p>
+        </div>
+        <nav class="footer-links" aria-label="Suite links">
+          <a href="architecture.html">Architecture</a>
+          <a href="integrating.html">Integrating</a>
+          <a href="https://github.com/provabl/ground">GitHub</a>
+        </nav>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2026 Scott Friedman</span>
+        <span>Apache 2.0</span>
+      </div>
+    </footer>
+  </div>
+  <script>
+  function toggleTheme(){const html=document.documentElement;const next=html.getAttribute('data-theme')==='dark'?'light':'dark';html.setAttribute('data-theme',next);localStorage.setItem('theme',next);document.getElementById('theme-icon').textContent=next==='dark'?'☀️':'🌙';}
+  document.getElementById('theme-toggle').addEventListener('click',toggleTheme);
+  (function(){const t=localStorage.getItem('theme')||'light';document.getElementById('theme-icon').textContent=t==='dark'?'☀️':'🌙';})();
+  const burger=document.querySelector('.hamburger'),links=document.getElementById('nav-links');
+  if(burger&&links){burger.addEventListener('click',()=>{const o=links.classList.toggle('open');burger.setAttribute('aria-expanded',o);});}
+  </script>
+</body>
+</html>
