@@ -10,7 +10,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"encoding/json"
+
 	"github.com/provabl/ground/internal/deploy"
+	"github.com/provabl/ground/internal/iac"
+	"github.com/provabl/ground/internal/stack/accounts"
+	"github.com/provabl/ground/internal/stack/identity"
 	"github.com/provabl/ground/internal/stack/logging"
 	"github.com/provabl/ground/internal/stack/security"
 )
@@ -44,6 +49,7 @@ It makes zero compliance claims — attest makes those after 'attest scan'.
 	cmd.AddCommand(deployCmd())
 	cmd.AddCommand(validateCmd())
 	cmd.AddCommand(statusCmd())
+	cmd.AddCommand(exportMetadataCmd())
 
 	return cmd
 }
@@ -52,6 +58,7 @@ func deployCmd() *cobra.Command {
 	var configPath string
 	var dryRun bool
 	var region string
+	var output string
 
 	cmd := &cobra.Command{
 		Use:   "deploy",
@@ -67,6 +74,9 @@ specific to each institution — see ground.example.yaml for configuration.
 
 Makes zero compliance claims — run 'attest scan' after deployment for posture.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if output == "terraform" || output == "cdk" {
+				return runGenerateIaC(configPath, output)
+			}
 			return runDeploy(configPath, region, dryRun)
 		},
 	}
@@ -74,6 +84,7 @@ Makes zero compliance claims — run 'attest scan' after deployment for posture.
 	cmd.Flags().StringVarP(&configPath, "config", "c", "ground.yaml", "path to ground configuration file")
 	cmd.Flags().StringVar(&region, "region", "", "AWS region (overrides config)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print CloudFormation templates without deploying")
+	cmd.Flags().StringVar(&output, "output", "cloudformation", "IaC output format: cloudformation (default), terraform, cdk")
 
 	return cmd
 }
@@ -134,15 +145,24 @@ func runDeploy(configPath, region string, dryRun bool) error {
 		return fmt.Errorf("generate security template: %w", err)
 	}
 
+	accountsStack := accounts.New(&cfg.Org)
+	identityStack := identity.New(&cfg.Identity)
+	accountsTmpl, _ := accountsStack.Template()
+	identityTmpl, _ := identityStack.Template()
+
 	if dryRun {
 		fmt.Println("Dry run — no changes will be made.")
 		fmt.Printf("Organization: %s (region: %s)\n\n", cfg.Org.Name, cfg.Org.Region)
 
 		logJSON, _ := logTmpl.JSON()
 		secJSON, _ := secTmpl.JSON()
+		accountsJSON, _ := accountsTmpl.JSON()
+		identityJSON, _ := identityTmpl.JSON()
 
 		fmt.Printf("Stack: %s\n%s\n\n", logStack.StackName(), logJSON)
 		fmt.Printf("Stack: %s\n%s\n\n", secStack.StackName(), secJSON)
+		fmt.Printf("Stack: %s\n%s\n\n", accountsStack.StackName(), accountsJSON)
+		fmt.Printf("Stack: %s\n%s\n\n", identityStack.StackName(), identityJSON)
 		fmt.Println("Run without --dry-run to deploy these stacks to CloudFormation.")
 		return nil
 	}
@@ -181,7 +201,30 @@ func runDeploy(configPath, region string, dryRun bool) error {
 	}
 	fmt.Printf("%s (%s)\n", action, secResult.Status)
 
-	fmt.Println("\nPhase 1 complete. Run 'attest init' to begin compliance assessment.")
+	fmt.Println("\nPhase 1 complete.")
+
+	// Phase 2: accounts + identity stacks (templates already generated for dry-run above).
+	for _, entry := range []struct {
+		name string
+		json string
+	}{
+		{accountsStack.StackName(), func() string { j, _ := accountsTmpl.JSON(); return j }()},
+		{identityStack.StackName(), func() string { j, _ := identityTmpl.JSON(); return j }()},
+	} {
+		idx := map[string]string{accountsStack.StackName(): "3", identityStack.StackName(): "4"}[entry.name]
+		fmt.Printf("  [%s/4] %s ... ", idx, entry.name)
+		result, deployErr := deployer.Deploy(ctx, entry.name, entry.json)
+		if deployErr != nil {
+			return fmt.Errorf("deploy %s: %w", entry.name, deployErr)
+		}
+		verb := "updated"
+		if result.Created {
+			verb = "created"
+		}
+		fmt.Printf("%s (%s)\n", verb, result.Status)
+	}
+
+	fmt.Println("\nAll stacks complete. Run 'attest init' to begin compliance assessment.")
 	fmt.Println("Note: zero compliance claims until 'attest scan' completes.")
 	return nil
 }
@@ -221,7 +264,7 @@ func runStatus(region string) error {
 		return fmt.Errorf("init deployer: %w", err)
 	}
 
-	stacks := []string{"ground-logging", "ground-security"}
+	stacks := []string{"ground-logging", "ground-security", "ground-accounts", "ground-identity"}
 	fmt.Printf("Stack status (region: %s)\n\n", region)
 	for _, name := range stacks {
 		status, err := deployer.Status(ctx, name)
@@ -231,5 +274,132 @@ func runStatus(region string) error {
 			fmt.Printf("  %-30s  %s\n", name, status)
 		}
 	}
+	return nil
+}
+
+func runGenerateIaC(configPath, format string) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	var outDir string
+	switch format {
+	case "terraform":
+		outDir = "ground-terraform"
+	case "cdk":
+		outDir = "ground-cdk"
+	default:
+		return fmt.Errorf("unknown output format %q (use terraform or cdk)", format)
+	}
+
+	g := iac.NewGenerator(iac.Format(format), outDir)
+	if err := g.Generate(cfg); err != nil {
+		return fmt.Errorf("generate %s: %w", format, err)
+	}
+
+	fmt.Printf("IaC artifacts written to ./%s/\n\n", outDir)
+	switch format {
+	case "terraform":
+		fmt.Printf("  cd %s\n", outDir)
+		fmt.Println("  terraform init")
+		fmt.Println("  terraform plan")
+		fmt.Println("  terraform apply")
+		fmt.Println()
+		fmt.Println("  Optional: set TF_VAR_identity_center_instance_arn for permission sets")
+	case "cdk":
+		fmt.Printf("  cd %s\n", outDir)
+		fmt.Println("  npm install")
+		fmt.Println("  npm run build")
+		fmt.Println("  cdk diff")
+		fmt.Println("  cdk deploy")
+		fmt.Println()
+		fmt.Println("  Optional: export IDENTITY_CENTER_INSTANCE_ARN=<arn> for permission sets")
+	}
+	return nil
+}
+
+// GroundMeta is the JSON structure produced by `ground export-metadata`.
+// Consumed by `attest init --ground-meta` to skip live AWS prerequisite checks.
+type GroundMeta struct {
+	GroundVersion             string `json:"ground_version"`
+	Region                    string `json:"region"`
+	CloudTrailEnabled         bool   `json:"cloudtrail_enabled"`
+	ConfigEnabled             bool   `json:"config_enabled"`
+	GuardDutyEnabled          bool   `json:"guardduty_enabled"`
+	SecurityHubEnabled        bool   `json:"security_hub_enabled"`
+	LogArchiveAccountID       string `json:"log_archive_account_id,omitempty"`
+	IdentityCenterInstanceARN string `json:"identity_center_instance_arn,omitempty"`
+}
+
+func exportMetadataCmd() *cobra.Command {
+	var outputPath string
+	var region string
+
+	cmd := &cobra.Command{
+		Use:   "export-metadata",
+		Short: "Export ground deployment metadata for attest init",
+		Long: `Queries deployed CloudFormation stacks and writes a JSON metadata file.
+Pass this file to 'attest init --ground-meta' to skip live AWS prerequisite checks.
+
+Example:
+  ground export-metadata --output ground-meta.json
+  attest init --region us-east-1 --ground-meta ground-meta.json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runExportMetadata(region, outputPath)
+		},
+	}
+	cmd.Flags().StringVar(&outputPath, "output", "ground-meta.json", "output file path")
+	cmd.Flags().StringVar(&region, "region", "us-east-1", "AWS region to query")
+	return cmd
+}
+
+func runExportMetadata(region, outputPath string) error {
+	ctx := context.Background()
+	deployer, err := deploy.New(ctx, region)
+	if err != nil {
+		return fmt.Errorf("init deployer: %w", err)
+	}
+
+	meta := GroundMeta{
+		GroundVersion: version,
+		Region:        region,
+	}
+
+	// Infer which services are deployed from stack status.
+	loggingStatus, _ := deployer.Status(ctx, "ground-logging")
+	securityStatus, _ := deployer.Status(ctx, "ground-security")
+
+	if loggingStatus == "CREATE_COMPLETE" || loggingStatus == "UPDATE_COMPLETE" {
+		meta.CloudTrailEnabled = true
+		meta.ConfigEnabled = true
+	}
+	if securityStatus == "CREATE_COMPLETE" || securityStatus == "UPDATE_COMPLETE" {
+		meta.GuardDutyEnabled = true
+		meta.SecurityHubEnabled = true
+	}
+
+	// Check accounts stack for Identity Center instance ARN output.
+	accountsStatus, _ := deployer.Status(ctx, "ground-accounts")
+	if accountsStatus == "CREATE_COMPLETE" || accountsStatus == "UPDATE_COMPLETE" {
+		// Identity Center ARN would be in stack outputs — placeholder for now.
+		// Full implementation reads CloudFormation stack outputs.
+		meta.IdentityCenterInstanceARN = "" // populated when accounts stack output is available
+	}
+
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
+	if err := os.WriteFile(outputPath, data, 0o640); err != nil { // #nosec G306 — user-specified path
+		return fmt.Errorf("write %s: %w", outputPath, err)
+	}
+
+	fmt.Printf("Ground metadata written to %s\n", outputPath)
+	fmt.Printf("  CloudTrail:    %v\n", meta.CloudTrailEnabled)
+	fmt.Printf("  Config:        %v\n", meta.ConfigEnabled)
+	fmt.Printf("  GuardDuty:     %v\n", meta.GuardDutyEnabled)
+	fmt.Printf("  Security Hub:  %v\n", meta.SecurityHubEnabled)
+	fmt.Printf("\nUsage: attest init --region %s --ground-meta %s\n", region, outputPath)
 	return nil
 }
