@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package logging defines the AWS logging foundation stack.
 //
 // Deploys: org-wide CloudTrail, VPC Flow Logs, AWS Config recorder,

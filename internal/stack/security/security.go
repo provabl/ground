@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package security defines the AWS security baseline stack.
 //
 // Deploys: GuardDuty (org-wide), Security Hub (org-wide, with NIST 800-53

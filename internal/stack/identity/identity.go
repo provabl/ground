@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package identity defines the AWS Identity Center stack.
 //
 // Deploys: IAM Identity Center instance, permission sets for

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package accounts defines the AWS Organization account structure stack.
 //
 // Deploys: management OU, security/audit accounts, network account,

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package policy defines IAM and SCP policies deployed by ground.
 //
 // Every policy in this package is tested before it ships. See policies/ for

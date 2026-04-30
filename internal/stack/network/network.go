@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package network defines the AWS network foundation stack.
 //
 // Deploys: Transit Gateway, hub-and-spoke VPCs, VPC endpoints with
