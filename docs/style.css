@@ -139,6 +139,13 @@ footer { border-top: 1px solid var(--border); padding: 2.5rem 0 2rem; margin-top
 .footer-bottom a { color: var(--text-muted); text-decoration: none; }
 .footer-bottom a:hover { color: var(--text-secondary); }
 
+/* Reference tables (customizing.html) */
+.ref-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 0.5rem 0; }
+.ref-table th { background: var(--bg-card); border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; font-weight: 700; color: var(--text-primary); }
+.ref-table td { border: 1px solid var(--border); padding: 0.45rem 0.75rem; color: var(--text-secondary); vertical-align: top; }
+.ref-table tr:nth-child(even) td { background: var(--bg); }
+.ref-table code { font-size: 0.83rem; background: var(--code-bg, #f1f5f9); padding: 0.1em 0.35em; border-radius: 3px; }
+
 @media (max-width: 640px) {
     .nav-links { display: none; flex-direction: column; position: absolute; top: 56px; left: 0; right: 0; background: var(--bg); border-bottom: 1px solid var(--border); padding: 1rem 1.5rem 1.5rem; gap: 1rem; }
     .nav-links.open { display: flex; }
@@ -147,4 +154,6 @@ footer { border-top: 1px solid var(--border); padding: 2.5rem 0 2rem; margin-top
     .hero-buttons { flex-direction: column; }
     .code-block pre { padding: 1.25rem; }
     .code-block code { font-size: 0.75rem; }
+    .ref-table { font-size: 0.8rem; }
+    .ref-table th, .ref-table td { padding: 0.35rem 0.5rem; }
 }

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Customizing ground</title>
-  <meta name="description" content="How to customize ground deployments: ground.yaml reference, selecting stacks, output formats, and configuration options.">
+  <title>Customizing ground — ground.yaml reference</title>
+  <meta name="description" content="Complete ground.yaml reference: all options, external service declarations, probe interface for service verification, IaC output modes.">
   <meta name="theme-color" content="#f8fafc">
   <script>(function(){var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t);}());</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -22,6 +22,9 @@
         <span class="nav-sep" aria-hidden="true">/</span>
         <a href="index.html" class="nav-product product-blue">ground</a>
       </div>
+      <button class="hamburger" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false" aria-controls="nav-links">
+        <span></span><span></span><span></span>
+      </button>
       <div class="nav-links" id="nav-links">
         <a href="index.html#install">Install</a>
         <a href="index.html#what-it-deploys">What it deploys</a>
@@ -29,7 +32,7 @@
         <a href="customizing.html" style="color:var(--accent);font-weight:700;">Customizing</a>
         <a href="integrating.html">Integrating</a>
         <a href="https://github.com/provabl/ground" target="_blank" rel="noopener noreferrer">GitHub</a>
-        <button class="btn-theme" id="theme-toggle" aria-label="Toggle color theme"><span id="theme-icon">🌙</span></button>
+        <button class="btn-theme" id="theme-toggle" aria-label="Toggle color theme"><span id="theme-icon" aria-hidden="true">🌙</span></button>
       </div>
     </div>
   </nav>
@@ -37,103 +40,254 @@
   <main id="main-content">
     <div class="container">
       <header class="hero" style="padding:2.5rem 0 2rem;">
-        <div class="hero-eyebrow product-blue-tag">How-to</div>
+        <div class="hero-eyebrow product-blue-tag">Reference</div>
         <h1 class="product-blue">Customizing ground</h1>
-        <p class="hero-sub">All ground behaviour is driven by <code>ground.yaml</code>. Start with the example, adjust for your institution, and use <code>ground deploy --dry-run</code> to preview before applying.</p>
+        <p class="hero-sub">All ground behaviour is driven by <code>ground.yaml</code>. Copy <code>ground.example.yaml</code>, fill in the required fields, and use <code>ground deploy --dry-run</code> to preview before applying.</p>
       </header>
 
-      <!-- ground.yaml reference -->
+      <!-- ground.yaml full reference -->
       <section id="config-reference" class="section" aria-labelledby="config-heading">
-        <h2 id="config-heading">ground.yaml full reference</h2>
-        <p class="section-intro">Copy <code>ground.example.yaml</code> and fill in the required fields. Everything else has sensible defaults.</p>
+        <h2 id="config-heading">ground.yaml — complete reference</h2>
+        <p class="section-intro">Every key ground accepts is shown below. Only the <code>org</code> block is required. All other sections have sensible defaults or can be omitted entirely.</p>
 
         <div class="code-block">
           <div class="code-titlebar" aria-hidden="true">
             <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
-            <span class="code-label">ground.yaml — full reference with defaults</span>
+            <span class="code-label">ground.yaml — all options</span>
           </div>
-          <pre><code><span class="cm"># REQUIRED ─────────────────────────────────────────────────────────</span>
+          <pre><code><span class="cm"># ── REQUIRED ────────────────────────────────────────────────────────────────</span>
 org:
-  name: "My Research University"          <span class="cm"># human name for SSP/reports</span>
-  region: us-east-1                       <span class="cm"># primary deployment region</span>
-  management_account_id: "123456789012"   <span class="cm"># management account (required)</span>
-  audit_email: audit@example.edu          <span class="cm"># Log Archive account email</span>
-  logging_email: logging@example.edu      <span class="cm"># optional: separate logging account</span>
-  workload_ous:                           <span class="cm"># custom sub-OUs to create</span>
-    - research
-    - sandbox
+  name: "My Research University"          <span class="cm"># human name — appears in SSP titles</span>
+  region: us-east-1                       <span class="cm"># AWS region for all ground stacks</span>
+  management_account_id: "123456789012"   <span class="cm"># 12-digit management account ID</span>
+  audit_email: audit@example.edu          <span class="cm"># email for the Log Archive account</span>
+  logging_email: logging@example.edu      <span class="cm"># optional — separate Logging account</span>
+                                          <span class="cm"># (defaults to audit_email if omitted)</span>
+  workload_ous:                           <span class="cm"># extra OUs inside the Research tier</span>
+    - research                            <span class="cm"># → /Research/research/</span>
+    - sandbox                             <span class="cm"># → /Research/sandbox/</span>
+    - hpc-cluster                         <span class="cm"># → /SensitiveResearch/hpc-cluster/</span>
 
-<span class="cm"># NETWORKING (Phase 2) ─────────────────────────────────────────────</span>
+<span class="cm"># ── NETWORKING ──────────────────────────────────────────────────────────────</span>
 network:
-  transit_gateway: true                   <span class="cm"># deploy TGW in Network Hub account</span>
-  cidr_block: "10.0.0.0/8"               <span class="cm"># supernet for all VPCs</span>
-  vpc_endpoints:                          <span class="cm"># services to endpoint-ize</span>
-    - s3
-    - ec2
-    - sts
-    - ssm
-    - secretsmanager
-    - kms
-    - logs
+  transit_gateway: true                   <span class="cm"># deploy Transit Gateway in Network Hub account</span>
+                                          <span class="cm"># false = no TGW, VPCs connect directly</span>
+  cidr_block: "10.0.0.0/8"               <span class="cm"># supernet for all VPCs (e.g., 10.0.0.0/8)</span>
+  vpc_endpoints:                          <span class="cm"># Interface endpoints created in each spoke VPC</span>
+    - s3                                  <span class="cm"># S3 Gateway endpoint (free)</span>
+    - ec2                                 <span class="cm"># EC2 API — for compute-heavy SREs</span>
+    - sts                                 <span class="cm"># STS — required for assume-role calls</span>
+    - ssm                                 <span class="cm"># Systems Manager — required for Session Manager</span>
+    - secretsmanager                      <span class="cm"># Secrets Manager — avoid hardcoded creds</span>
+    - kms                                 <span class="cm"># KMS — for CMK encrypt/decrypt calls</span>
+    - logs                                <span class="cm"># CloudWatch Logs — for VPC flow log delivery</span>
+    - execute-api                         <span class="cm"># optional — API Gateway private endpoints</span>
+    - sagemaker.api                       <span class="cm"># optional — SageMaker in air-gapped VPCs</span>
+    - sagemaker.runtime                   <span class="cm"># optional — SageMaker inference</span>
 
-<span class="cm"># IDENTITY ─────────────────────────────────────────────────────────</span>
+<span class="cm"># ── IDENTITY ────────────────────────────────────────────────────────────────</span>
 identity:
-  identity_center: true                   <span class="cm"># deploy IAM Identity Center</span>
+  identity_center: true                   <span class="cm"># create IAM Identity Center permission sets</span>
+                                          <span class="cm"># false = skip (use existing IdP/Federation)</span>
   instance_arn: ""                        <span class="cm"># set if Identity Center already exists</span>
+                                          <span class="cm"># (ground will add permission sets, not re-create)</span>
 
-<span class="cm"># LOGGING ──────────────────────────────────────────────────────────</span>
+<span class="cm"># ── LOGGING ─────────────────────────────────────────────────────────────────</span>
 logging:
-  retention_days: 365                     <span class="cm"># audit log retention (S3 lifecycle)</span>
-  bucket_name: ""                         <span class="cm"># auto-generated if empty</span>
+  retention_days: 365                     <span class="cm"># S3 lifecycle expiry for audit logs</span>
+                                          <span class="cm"># FedRAMP Moderate minimum: 365; CMMC L2: 90</span>
+                                          <span class="cm"># attest will warn if below your framework's minimum</span>
+  bucket_name: ""                         <span class="cm"># audit bucket name — auto-generated if empty</span>
+                                          <span class="cm"># format: ground-audit-&lt;management-account-id&gt;</span>
 
-<span class="cm"># SECURITY ─────────────────────────────────────────────────────────</span>
+<span class="cm"># ── SECURITY ────────────────────────────────────────────────────────────────</span>
+<span class="cm"># ground deploys a logging-protection SCP only. Detection services</span>
+<span class="cm"># (GuardDuty, Security Hub, Macie) are activated by 'attest apply' based on</span>
+<span class="cm"># your active compliance frameworks. ground cannot know the correct standard</span>
+<span class="cm"># without knowing your frameworks — that is attest's job.</span>
+<span class="cm">#</span>
+<span class="cm"># Declare non-AWS services here so attest can assess which controls they satisfy.</span>
+<span class="cm"># ground.yaml is version-controlled — these declarations are audit evidence.</span>
 security:
-  guardduty: true                         <span class="cm"># enable GuardDuty org-wide</span>
-  security_hub: true                      <span class="cm"># enable Security Hub + NIST 800-53</span>
-  macie: true                             <span class="cm"># enable Macie org-wide</span>
+  external_services:
 
-<span class="cm"># TAGGING ──────────────────────────────────────────────────────────</span>
+    <span class="cm"># Category options:</span>
+    <span class="cm">#   edr               — endpoint detection and response</span>
+    <span class="cm">#   siem              — security information and event management</span>
+    <span class="cm">#   cspm              — cloud security posture management</span>
+    <span class="cm">#   cwpp              — cloud workload protection</span>
+    <span class="cm">#   data-transfer     — research data movement (e.g., Globus)</span>
+    <span class="cm">#   vuln-scanning     — vulnerability scanning</span>
+    <span class="cm">#   identity          — identity provider / MFA / PAM</span>
+    <span class="cm">#   research-platform — research-specific services (HPC schedulers, portals)</span>
+    <span class="cm">#</span>
+    <span class="cm"># Feature options (compliance capabilities the service brings):</span>
+    <span class="cm">#   fedramp-high      — FedRAMP High authorized</span>
+    <span class="cm">#   fedramp-moderate  — FedRAMP Moderate authorized</span>
+    <span class="cm">#   baa               — Business Associate Agreement available (HIPAA)</span>
+    <span class="cm">#   hipaa-compliant   — HIPAA-eligible service</span>
+    <span class="cm">#   high-assurance    — high-assurance mode available (Globus terminology)</span>
+    <span class="cm">#   soc2-type2        — SOC 2 Type II report available</span>
+    <span class="cm">#   iso27001          — ISO 27001 certified</span>
+    <span class="cm">#   itar-compliant    — ITAR-eligible service</span>
+
+    <span class="cm"># Globus — research data transfer platform</span>
+    <span class="cm"># Required for NIH dbGaP, DOE Superfacility, many HPC data movement workflows.</span>
+    <span class="cm"># High Assurance mode enforces MFA and encrypted transfer for CUI/PHI datasets.</span>
+    - name: globus
+      vendor: "Globus / University of Chicago"
+      category: data-transfer
+      features:
+        - baa              <span class="cm"># BAA available for HIPAA-covered workflows</span>
+        - high-assurance   <span class="cm"># HA mode enforces MFA + encryption per endpoint</span>
+        - fedramp-moderate
+      scope:               <span class="cm"># OU names this service applies to; empty = org-wide</span>
+        - SensitiveResearch
+        - NIHGenomic
+        - HIPAAResearch
+      notes: "High Assurance enabled; BAA signed 2025-01-15. Required for dbGaP transfers."
+      probe: ground-probe-globus   <span class="cm"># optional: verify declarations via Globus API</span>
+      probe_config:                <span class="cm"># passed to the probe binary as JSON on stdin</span>
+        client_id: "your-globus-app-client-id"
+        endpoint_ids:
+          - "abc123-..."
+
+    <span class="cm"># CrowdStrike Falcon — EDR/XDR (FedRAMP High authorized)</span>
+    - name: crowdstrike-falcon
+      vendor: CrowdStrike
+      category: edr
+      features:
+        - fedramp-high
+        - soc2-type2
+      scope: []            <span class="cm"># empty = org-wide</span>
+
+    <span class="cm"># Splunk — SIEM (comment out if using CloudWatch / OpenSearch instead)</span>
+    <span class="cm"># - name: splunk-cloud</span>
+    <span class="cm">#   vendor: Splunk</span>
+    <span class="cm">#   category: siem</span>
+    <span class="cm">#   features: [fedramp-moderate]</span>
+    <span class="cm">#   scope: []</span>
+
+    <span class="cm"># Palo Alto Prisma Cloud — CSPM + CWPP</span>
+    <span class="cm"># - name: prisma-cloud</span>
+    <span class="cm">#   vendor: "Palo Alto Networks"</span>
+    <span class="cm">#   category: cspm</span>
+    <span class="cm">#   features: [soc2-type2]</span>
+    <span class="cm">#   scope: []</span>
+
+    <span class="cm"># Tenable.io — vulnerability scanning</span>
+    <span class="cm"># - name: tenable-io</span>
+    <span class="cm">#   vendor: Tenable</span>
+    <span class="cm">#   category: vuln-scanning</span>
+    <span class="cm">#   features: [fedramp-moderate]</span>
+    <span class="cm">#   scope: []</span>
+
+<span class="cm"># ── TAGGING ──────────────────────────────────────────────────────────────────</span>
 tagging:
-  required_tags:                          <span class="cm"># per-tag OR logic SCPs</span>
-    - project
-    - environment
-    - owner
-    - data-classification</code></pre>
+  required_tags:                          <span class="cm"># One Deny SCP per tag (OR logic, not AND)</span>
+    - project                             <span class="cm"># what research project this resource supports</span>
+    - environment                         <span class="cm"># dev / staging / prod</span>
+    - owner                               <span class="cm"># team or PI email</span>
+    - data-classification                 <span class="cm"># public / internal / restricted / cui / phi</span>
+    <span class="cm"># - cost-center                         # add institutional finance tags as needed</span>
+    <span class="cm"># - grant-number                        # for grant reporting and cost allocation</span></code></pre>
         </div>
+      </section>
+
+      <!-- External services section -->
+      <section id="external-services" class="section" aria-labelledby="ext-heading">
+        <h2 id="ext-heading">Declaring external services</h2>
+        <p class="section-intro">Research institutions deploy services alongside AWS that carry compliance weight — Globus for data transfer, CrowdStrike for endpoint protection, Splunk for SIEM. Ground records these declarations so attest can assess which controls they satisfy. <strong>Ground does not deploy, configure, or verify these services.</strong></p>
+
+        <div class="deploys-grid" style="margin-top:1.25rem;">
+          <div class="deploy-card">
+            <h3>Why declare them in ground.yaml?</h3>
+            <p>Declarations are version-controlled and auditable. "We declared Globus High Assurance with a signed BAA on 2025-01-15" is audit evidence. attest reads these from <code>ground-meta.json</code> and maps them to controls — for example, a CrowdStrike FedRAMP High declaration contributes evidence toward NIST 800-171 §3.14.x endpoint protection controls.</p>
+          </div>
+          <div class="deploy-card">
+            <h3>What about Globus specifically?</h3>
+            <p>Globus High Assurance mode enforces MFA and encrypted transfer per endpoint — it is often <em>required</em> for NIH dbGaP transfers and DOE Superfacility data movement. Declaring it with <code>baa</code> and <code>high-assurance</code> features lets attest mark HIPAA data-transfer controls and NIH GDS transfer requirements as addressed.</p>
+          </div>
+        </div>
+
+        <div class="arch-note" style="margin-top:1.5rem;">
+          <strong>Detection services are different.</strong> GuardDuty, Security Hub, and Macie are AWS-native and are activated by <code>attest apply</code> — ground does not configure them because the correct Security Hub standard depends on which compliance frameworks are active, which only attest knows after <code>attest compile</code>.
+        </div>
+      </section>
+
+      <!-- Probe mechanism -->
+      <section id="probes" class="section" aria-labelledby="probe-heading">
+        <h2 id="probe-heading">Service probes (verification)</h2>
+        <p class="section-intro">Declarations in <code>ground.yaml</code> are self-reported. Probes <em>verify</em> them by querying the service's own API. A probe is a small binary that ground invokes during <code>ground export-metadata</code> — it receives the service config as JSON on stdin and writes a discovery result to stdout.</p>
+
+        <div class="code-block">
+          <div class="code-titlebar" aria-hidden="true">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="code-label">probe binary contract</span>
+          </div>
+          <pre><code><span class="cm"># ground invokes the probe with the probe_config block as JSON on stdin:</span>
+echo '{"client_id":"...","endpoint_ids":["abc123"]}' | ground-probe-globus
+
+<span class="cm"># The probe writes a discovery result to stdout:</span>
+{
+  "service": "globus",
+  "probed_at": "2026-04-30T14:22:00Z",
+  "features_verified": ["high-assurance", "baa"],
+  "features_unverified": ["fedramp-moderate"],
+  "endpoints": [
+    {
+      "id": "abc123-...",
+      "display_name": "University HPC Cluster",
+      "high_assurance": true,
+      "subscription_id": "plus-abc..."
+    }
+  ]
+}
+
+<span class="cm"># Exit codes: 0 = verified, 1 = partial (some checks failed), 2 = error</span>
+<span class="cm"># ground merges probe results into ground-meta.json alongside declarations.</span></code></pre>
+        </div>
+
+        <div class="arch-note">
+          <strong>Probe binaries are not part of ground.</strong> The probe interface is a specification — the <code>ground-probe-*</code> binaries are separate projects. This keeps ground small and lets anyone write a probe for any service. A reference <code>ground-probe-globus</code> implementation is planned that queries the Globus Transfer API to verify endpoint HA status and subscription tier.
+        </div>
+
+        <p class="section-intro">If no probe is configured for a service, ground uses the declared <code>features</code> list as-is. Probes add verified evidence on top of declarations — they do not replace them. If a probe is unavailable or returns an error, ground falls back to the declaration and notes the verification status in <code>ground-meta.json</code>.</p>
       </section>
 
       <!-- Selective deployment -->
       <section id="selective" class="section" aria-labelledby="sel-heading">
         <h2 id="sel-heading">Deploying individual stacks</h2>
-        <p class="section-intro">ground deploy runs all four stacks in sequence. If you only need certain layers — or want to deploy incrementally — you can target stacks individually using the AWS CLI or your IaC output.</p>
+        <p class="section-intro">Ground deploy runs all four stacks in sequence. Deploy incrementally using IaC output, or target stacks directly via AWS CLI.</p>
 
         <div class="code-block">
-          <pre><code><span class="cm"># Deploy only the logging foundation (minimum for attest to work)</span>
-<span class="ground">ground</span> deploy --dry-run <span class="cm"># shows all 4 stacks</span>
+          <pre><code><span class="cm"># Preview all stacks without deploying</span>
+<span class="ground">ground</span> deploy --dry-run
 
 <span class="cm"># Generate Terraform or CDK and apply selectively</span>
 <span class="ground">ground</span> deploy --output terraform
 cd ground-terraform
-
-<span class="cm"># Apply only the logging and security resources</span>
 terraform apply -target=aws_cloudformation_stack.ground_logging \
                 -target=aws_cloudformation_stack.ground_security</code></pre>
         </div>
 
         <div class="deploys-grid" style="margin-top:1.25rem;">
           <div class="deploy-card">
-            <h3>Minimum viable (for attest)</h3>
-            <p>Deploy only <strong>logging</strong> and <strong>security</strong> stacks. This gives attest what it needs to run <code>attest scan</code> and assess posture — CloudTrail, Config, GuardDuty, Security Hub.</p>
-            <div class="code-block" style="margin-top:0.75rem;">
-              <pre><code><span class="ground">ground</span> deploy
-<span class="cm"># then skip accounts + identity if not ready</span></code></pre>
-            </div>
+            <h3>Stack deployment order</h3>
+            <ol style="margin:0.5rem 0 0 1.2rem;padding:0;line-height:1.8;">
+              <li><strong>accounts</strong> — OU hierarchy, account vending</li>
+              <li><strong>security</strong> — logging-protection SCP</li>
+              <li><strong>logging</strong> — CloudTrail, Config, S3 audit bucket</li>
+              <li><strong>identity</strong> — IAM Identity Center permission sets</li>
+              <li><strong>network</strong> — Transit Gateway, VPCs, endpoints</li>
+            </ol>
+            <p style="margin-top:0.75rem;">Minimum for <code>attest scan</code>: deploy <strong>logging</strong> + <strong>security</strong>. attest will warn about the missing stacks but can still assess posture from CloudTrail and Config rules.</p>
           </div>
           <div class="deploy-card">
             <h3>IaC output modes</h3>
-            <p>ground generates CloudFormation (default), Terraform HCL, or CDK TypeScript. The CloudFormation path deploys directly; Terraform and CDK generate artifacts for you to apply with your existing toolchain.</p>
+            <p>Ground generates CloudFormation (default), Terraform HCL, or CDK TypeScript. CloudFormation deploys directly; Terraform and CDK generate artifacts for your existing toolchain.</p>
             <div class="code-block" style="margin-top:0.75rem;">
-              <pre><code><span class="ground">ground</span> deploy --output cloudformation  <span class="cm"># default</span>
+              <pre><code><span class="ground">ground</span> deploy --output cloudformation  <span class="cm"># default: deploy now</span>
 <span class="ground">ground</span> deploy --output terraform        <span class="cm"># → ground-terraform/</span>
 <span class="ground">ground</span> deploy --output cdk             <span class="cm"># → ground-cdk/</span></code></pre>
             </div>
@@ -141,61 +295,83 @@ terraform apply -target=aws_cloudformation_stack.ground_logging \
         </div>
       </section>
 
-      <!-- Disable services -->
-      <section id="disable" class="section" aria-labelledby="dis-heading">
-        <h2 id="dis-heading">Disabling services</h2>
-        <p class="section-intro">Set any security service to <code>false</code> to skip it. Be aware of the compliance implications — disabling GuardDuty, for instance, means attest will report that control as a gap during <code>attest scan</code>.</p>
-
-        <div class="code-block">
-          <pre><code><span class="cm"># ground.yaml — disable Macie if not needed for your data types</span>
-security:
-  guardduty: true
-  security_hub: true
-  macie: false     <span class="cm"># skip Macie — attest will flag nist-800-171-r2 3.14.x as partial</span></code></pre>
-        </div>
-
-        <div class="does-not" style="margin-top:1rem;">
-          <h3>Cost and compliance impact</h3>
-          <ul>
-            <li><strong>GuardDuty</strong> — low cost. Keep enabled. Disabling creates gaps against NIST 800-171 §3.14.7, CMMC SI.L2-3.14.7, HIPAA §164.308(a)(1)</li>
-            <li><strong>Security Hub</strong> — low fixed cost per check. Keep enabled. attest reads posture from Security Hub; disabling makes scan results incomplete</li>
-            <li><strong>Macie</strong> — <strong>expensive at scale: charged per GB scanned + per S3 bucket per month.</strong> Default is <code>false</code>. Enable only when you specifically need automated PII/PHI discovery. Check <a href="https://aws.amazon.com/macie/pricing/" target="_blank" rel="noopener">AWS Macie pricing</a> before enabling across the org</li>
-          </ul>
-        </div>
-      </section>
-
       <!-- Custom OUs -->
       <section id="custom-ous" class="section" aria-labelledby="ou-heading">
         <h2 id="ou-heading">Custom workload OUs</h2>
-        <p class="section-intro">The five default OUs (Security, Infrastructure, Research, Sensitive Research, DoD/CMMC) are always created. Add institution-specific OUs under <code>workload_ous</code>.</p>
+        <p class="section-intro">The five default OUs (Security, Infrastructure, Research, Sensitive Research, DoD/CMMC) are always created. Add institution-specific OUs under <code>workload_ous</code>. Custom OUs inherit the SCPs of their parent tier and are tagged with <code>ground:tier</code> for attest auto-discovery.</p>
 
         <div class="code-block">
-          <pre><code><span class="cm"># ground.yaml — add institution-specific OUs</span>
-org:
+          <pre><code>org:
   workload_ous:
-    - research          <span class="cm"># → /Research/ OU</span>
-    - sandbox           <span class="cm"># → /Research/Sandbox/ sub-OU</span>
-    - hpc-cluster       <span class="cm"># → /SensitiveResearch/HPC/ sub-OU</span></code></pre>
+    - research             <span class="cm"># → /Research/ OU, inherits Research SCP tier</span>
+    - sandbox              <span class="cm"># → /Research/Sandbox/ sub-OU</span>
+    - hpc-cluster          <span class="cm"># → /SensitiveResearch/HPC/ sub-OU, inherits Sensitive tier</span>
+    - dod-contractors      <span class="cm"># → /DoD-CMMC/ sub-OU, inherits DoD SCP tier</span></code></pre>
         </div>
-
-        <p class="section-intro">Custom OUs inherit the SCPs of their parent tier. They are tagged with <code>ground:tier</code> matching their parent, which attest uses for SSP system boundary auto-discovery.</p>
       </section>
 
       <!-- Custom tagging -->
       <section id="custom-tagging" class="section" aria-labelledby="ctag-heading">
         <h2 id="ctag-heading">Custom required tags</h2>
-        <p class="section-intro">The default tagging SCP enforces five <code>attest:*</code> tags. Add institutional tags to the list — each becomes its own Deny statement (OR logic, not AND).</p>
+        <p class="section-intro">Each entry in <code>required_tags</code> generates its own Deny SCP statement — OR logic, not AND. Resources missing any single tag will be denied creation. Add institutional tags alongside the attest defaults.</p>
 
         <div class="code-block">
-          <pre><code><span class="cm"># ground.yaml — add institutional tags</span>
-tagging:
+          <pre><code>tagging:
   required_tags:
-    - project
-    - environment
-    - owner
-    - data-classification
-    - cost-center        <span class="cm"># institution-specific</span>
-    - grant-number       <span class="cm"># for grant reporting</span></code></pre>
+    - project              <span class="cm"># what research project / grant this supports</span>
+    - environment          <span class="cm"># dev / staging / prod</span>
+    - owner                <span class="cm"># PI email or team name</span>
+    - data-classification  <span class="cm"># public / internal / restricted / cui / phi</span>
+    - cost-center          <span class="cm"># → finance reporting (institution-specific)</span>
+    - grant-number         <span class="cm"># → grant reporting and cost allocation</span></code></pre>
+        </div>
+      </section>
+
+      <!-- VPC endpoints guide -->
+      <section id="vpc-endpoints" class="section" aria-labelledby="vpce-heading">
+        <h2 id="vpce-heading">VPC endpoint selection</h2>
+        <p class="section-intro">VPC endpoints keep traffic inside the AWS network and are required by most FedRAMP and CMMC controls. The table below shows which endpoints are relevant to common research workload patterns.</p>
+
+        <table class="ref-table">
+          <thead>
+            <tr><th>Endpoint</th><th>When to include</th><th>Cost</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>s3</code></td><td>Always — free gateway endpoint</td><td>Free</td></tr>
+            <tr><td><code>sts</code></td><td>Always — IAM assume-role calls go through STS</td><td>~$7/mo per AZ</td></tr>
+            <tr><td><code>ssm</code></td><td>Required for Session Manager (no bastion hosts)</td><td>~$7/mo per AZ</td></tr>
+            <tr><td><code>secretsmanager</code></td><td>Any workload reading secrets (databases, API keys)</td><td>~$7/mo per AZ</td></tr>
+            <tr><td><code>kms</code></td><td>Any workload using CMKs for encryption</td><td>~$7/mo per AZ</td></tr>
+            <tr><td><code>ec2</code></td><td>EC2-heavy SREs; allows EC2 API calls without internet</td><td>~$7/mo per AZ</td></tr>
+            <tr><td><code>logs</code></td><td>Required for VPC Flow Log delivery</td><td>~$7/mo per AZ</td></tr>
+            <tr><td><code>sagemaker.api</code></td><td>SageMaker in air-gapped VPCs (CMMC L2+)</td><td>~$7/mo per AZ</td></tr>
+            <tr><td><code>execute-api</code></td><td>Private API Gateway endpoints</td><td>~$7/mo per AZ</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:0.85rem;color:var(--muted);margin-top:0.5rem;">Cost is per AZ, per region, per month. All endpoints use <code>aws:PrincipalOrgID</code> conditions — only principals in your org can use them.</p>
+      </section>
+
+      <!-- Logging retention guidance -->
+      <section id="retention" class="section" aria-labelledby="ret-heading">
+        <h2 id="ret-heading">Log retention by framework</h2>
+        <p class="section-intro">Set <code>logging.retention_days</code> to meet the most restrictive framework active in your SRE. attest will warn during <code>attest scan</code> if retention falls below the framework minimum.</p>
+
+        <table class="ref-table">
+          <thead>
+            <tr><th>Framework</th><th>Minimum retention</th><th>Recommended</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>CMMC Level 1</td><td>90 days</td><td>365 days</td></tr>
+            <tr><td>CMMC Level 2</td><td>90 days</td><td>365 days</td></tr>
+            <tr><td>HIPAA</td><td>6 years (2190 days)</td><td>2555 days (7 yr)</td></tr>
+            <tr><td>FedRAMP Moderate</td><td>365 days</td><td>365 days</td></tr>
+            <tr><td>NIH GDS</td><td>365 days after DUA closeout</td><td>365 days</td></tr>
+            <tr><td>FERPA</td><td>5 years (1825 days)</td><td>1825 days</td></tr>
+            <tr><td>ISO 27001</td><td>90 days</td><td>365 days</td></tr>
+          </tbody>
+        </table>
+        <div class="arch-note" style="margin-top:1rem;">
+          <strong>HIPAA + NIH GDS conflict:</strong> HIPAA requires long retention; NIH GDS requires deletion of genomic data at DUA closeout. attest's provenance-aware provisioning resolves this by using per-prefix S3 lifecycle rules — HIPAA audit logs stay 7 years; dbGaP-sourced genomic objects expire at DUA closeout. Set <code>retention_days</code> to your highest requirement and let attest manage the per-dataset overrides.
         </div>
       </section>
 
@@ -213,14 +389,16 @@ tagging:
           <a href="architecture.html">Architecture</a>
           <a href="integrating.html">Integrating</a>
           <a href="https://github.com/provabl/ground">GitHub</a>
+          <a href="https://github.com/provabl/ground/issues">Issues</a>
         </nav>
       </div>
       <div class="footer-bottom">
-        <span>© 2026 Scott Friedman</span>
-        <span>Apache 2.0</span>
+        <span>Made by <a href="https://github.com/scttfrdmn">@scttfrdmn</a></span>
+        <span>© 2026 Scott Friedman. Licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener noreferrer">Apache License 2.0</a>.</span>
       </div>
     </footer>
   </div>
+
   <script>
   function toggleTheme(){const html=document.documentElement;const next=html.getAttribute('data-theme')==='dark'?'light':'dark';html.setAttribute('data-theme',next);localStorage.setItem('theme',next);document.getElementById('theme-icon').textContent=next==='dark'?'☀️':'🌙';}
   document.getElementById('theme-toggle').addEventListener('click',toggleTheme);
