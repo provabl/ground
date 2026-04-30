@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ## [Unreleased]
 
+### Added
+- Phase 1 CloudFormation stacks — `ground deploy` now functional:
+  - Logging stack: S3 audit bucket (KMS-encrypted, object-locked, HTTPS-only policy),
+    org-wide CloudTrail with data events, AWS Config recorder and delivery channel
+  - Security stack: GuardDuty (all data sources), Security Hub with NIST 800-53 Rev 5
+    standard, Macie session — all enabled by default
+- `internal/cfn`: CloudFormation template builder (`Template`, `Resource`, `Tag` helpers)
+- `internal/deploy`: CloudFormation deployer with create/update, poll-to-terminal-state,
+  "no updates to perform" handled gracefully
+- `ground deploy --dry-run` prints full CloudFormation JSON without deploying
+- `ground status` queries live CloudFormation stack status via AWS SDK
+- `ground deploy --region` flag overrides config region
+- AWS SDK v2 dependencies: `cloudformation`, `organizations`, `iam`, `config`
+- SLSA Level 2 release workflow (`actions/attest-build-provenance` + cosign keyless + SBOM)
+- SPDX-FileCopyrightText headers on all Go source files (2026 Scott Friedman)
+- `LICENSE` (Apache 2.0), `LICENSES/Apache-2.0.txt`, `REUSE.toml`, `NOTICE`
+- `ground.provabl.dev` documentation site (GitHub Pages from `docs/`)
+- GitHub milestones: v0.2.0 (OU Foundation), v0.3.0 (attest Integration)
+- GitHub issues: OU hierarchy, per-OU SCPs, account tagging SCP, IAM Identity Center
+  permission sets, ground export-metadata
+
 ## [0.1.0] - 2026-04-29
 
 ### Added
