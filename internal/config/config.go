@@ -45,10 +45,30 @@ type LoggingConfig struct {
 	BucketName    string `yaml:"bucket_name,omitempty"`
 }
 
+// SecurityConfig declares non-AWS services deployed within this SRE.
+// Ground does not deploy or configure these services — it records the declarations
+// so attest can assess which compliance controls they satisfy.
+//
+// Examples of external services to declare here:
+//   - CrowdStrike Falcon (EDR, FedRAMP High authorized)
+//   - Globus (research data transfer, BAA available, High Assurance for regulated data)
+//   - Splunk (SIEM, FedRAMP Moderate authorized)
+//   - Palo Alto Prisma Cloud (CSPM/CWPP)
+//   - Tenable.io / Nessus (vulnerability scanning)
 type SecurityConfig struct {
-	GuardDuty   bool `yaml:"guardduty"`
-	SecurityHub bool `yaml:"security_hub"`
-	Macie       bool `yaml:"macie"`
+	ExternalServices []ExternalService `yaml:"external_services,omitempty"`
+}
+
+// ExternalService declares a non-AWS service deployed in this SRE.
+// Category options: edr, siem, cspm, cwpp, data-transfer, vuln-scanning, identity, research-platform
+// Feature options: fedramp-high, fedramp-moderate, baa, hipaa-compliant, high-assurance, soc2-type2, iso27001
+type ExternalService struct {
+	Name     string   `yaml:"name"`               // slug, e.g., "crowdstrike-falcon"
+	Vendor   string   `yaml:"vendor"`             // display name, e.g., "CrowdStrike"
+	Category string   `yaml:"category"`           // edr, siem, cspm, data-transfer, ...
+	Features []string `yaml:"features,omitempty"` // fedramp-high, baa, high-assurance, ...
+	Scope    []string `yaml:"scope,omitempty"`    // OU names; empty = org-wide
+	Notes    string   `yaml:"notes,omitempty"`    // free-text operator context
 }
 
 type TaggingConfig struct {
@@ -110,11 +130,10 @@ func DefaultConfig() *Config {
 		Logging: LoggingConfig{
 			RetentionDays: 365,
 		},
-		Security: SecurityConfig{
-			GuardDuty:   true,   // strongly recommended — low cost, required for attest posture
-			SecurityHub: true,   // recommended — required for NIST 800-53 control assessment
-			Macie:       false,  // opt-in: charged per GB scanned + per bucket; enable only when needed for PHI/PII discovery
-		},
+		// Security detection services (GuardDuty, Security Hub, Macie) are attest's
+		// responsibility — not ground's. Declare any non-AWS security or research
+		// platform services here so attest can assess the relevant controls.
+		Security: SecurityConfig{},
 		Tagging: TaggingConfig{
 			RequiredTags: []string{
 				"project", "environment", "owner", "data-classification",

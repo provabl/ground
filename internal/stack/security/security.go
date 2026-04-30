@@ -1,19 +1,33 @@
 // SPDX-FileCopyrightText: 2026 Scott Friedman
 // SPDX-License-Identifier: Apache-2.0
 
-// Package security defines the AWS security baseline stack.
+// Package security defines the logging-protection SCP stack.
 //
-// Deploys: GuardDuty (org-wide delegate), Security Hub (org-wide with NIST 800-53
-// standard), Macie (org-wide). All three are ON by default — unlike most templates
-// that ship with them disabled.
+// Ground deploys structural AWS plumbing only. Security detection services
+// (GuardDuty, Security Hub, Macie) are NOT deployed here — that is attest's job
+// after 'attest compile' selects the appropriate standards for active frameworks.
+//
+// What this stack deploys:
+//   - A Service Control Policy (SCP) that denies disabling the logging infrastructure
+//     ground itself deployed (CloudTrail, Config). This protects ground's own plumbing
+//     from accidental or malicious disablement.
+//   - The SCP is attached to the organization root so all member accounts inherit it.
+//
+// Non-AWS services (CrowdStrike, Globus, Splunk, Palo Alto Prisma, etc.) are declared
+// in the ExternalServices section of ground.yaml. Ground records these declarations in
+// its metadata so attest can assess which controls are satisfied by those services.
+// Ground does not deploy, configure, or verify those services.
 package security
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/provabl/ground/internal/cfn"
 	"github.com/provabl/ground/internal/config"
 )
 
-// Stack builds the CloudFormation template for the security baseline.
+// Stack builds the CloudFormation template for the logging-protection SCP.
 type Stack struct {
 	cfg *config.SecurityConfig
 	org *config.OrgConfig
@@ -27,61 +41,70 @@ func New(cfg *config.SecurityConfig, org *config.OrgConfig) *Stack {
 // StackName returns the CloudFormation stack name.
 func (s *Stack) StackName() string { return "ground-security" }
 
-// Template generates the CloudFormation template for the security baseline.
-// This template must be deployed from the management account with delegated
-// admin enabled for GuardDuty, Security Hub, and Macie.
+// Template generates the logging-protection SCP.
+// This SCP denies disabling CloudTrail and Config across all member accounts.
 func (s *Stack) Template() (*cfn.Template, error) {
-	resources := map[string]any{}
-
-	if s.cfg.GuardDuty {
-		resources["GuardDutyDetector"] = cfn.Resource("AWS::GuardDuty::Detector", map[string]any{
-			"Enable": true,
-			"DataSources": map[string]any{
-				"S3Logs":              map[string]bool{"Enable": true},
-				"Kubernetes":          map[string]any{"AuditLogs": map[string]bool{"Enable": true}},
-				"MalwareProtection":   map[string]any{"ScanEc2InstanceWithFindings": map[string]bool{"EbsVolumes": true}},
+	// SCP content: deny disabling the logging infrastructure ground deployed.
+	// Detection services are not mentioned here — attest enables GuardDuty,
+	// Security Hub (with the correct standard), and Macie after 'attest compile'
+	// determines which frameworks are active.
+	scpPolicy := map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{
+			{
+				"Sid":    "DenyDisableCloudTrail",
+				"Effect": "Deny",
+				"Action": []string{
+					"cloudtrail:DeleteTrail",
+					"cloudtrail:StopLogging",
+					"cloudtrail:UpdateTrail",
+				},
+				"Resource": "*",
 			},
-			"FindingPublishingFrequency": "FIFTEEN_MINUTES",
-			"Tags": []map[string]string{cfn.Tag("managed-by", "ground")},
-		})
+			{
+				"Sid":    "DenyDisableConfig",
+				"Effect": "Deny",
+				"Action": []string{
+					"config:DeleteConfigRule",
+					"config:DeleteConfigurationRecorder",
+					"config:DeleteDeliveryChannel",
+					"config:StopConfigurationRecorder",
+				},
+				"Resource": "*",
+			},
+		},
 	}
 
-	if s.cfg.SecurityHub {
-		resources["SecurityHub"] = cfn.Resource("AWS::SecurityHub::Hub", map[string]any{
-			"EnableDefaultStandards": true,
-			"Tags":                   map[string]string{"managed-by": "ground"},
-		})
-
-		// Enable NIST 800-53 Rev 5 standard (the authoritative standard for FedRAMP/CMMC).
-		resources["NIST80053Standard"] = cfn.Resource("AWS::SecurityHub::Standard", map[string]any{
-			"StandardsArn": "arn:aws:securityhub:::ruleset/nist-800-53/v/5.0.0",
-			"DependsOn":    "SecurityHub",
-		})
-	}
-
-	if s.cfg.Macie {
-		resources["MacieSession"] = cfn.Resource("AWS::Macie::Session", map[string]any{
-			"Status":           "ENABLED",
-			"FindingPublishingFrequency": "FIFTEEN_MINUTES",
-		})
+	scpJSON, err := json.Marshal(scpPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("marshal logging protection SCP: %w", err)
 	}
 
 	return &cfn.Template{
 		AWSTemplateFormatVersion: "2010-09-09",
-		Description:              "ground: security baseline — GuardDuty, Security Hub (NIST 800-53), Macie",
-		Resources:                resources,
+		Description:              "ground: logging-protection SCP — deny disabling CloudTrail and Config",
+		Parameters: map[string]any{
+			"OrgRootId": map[string]any{
+				"Type":           "String",
+				"Description":    "AWS Organizations root ID (e.g., r-abcd). Retrieved automatically by 'ground deploy'.",
+				"AllowedPattern": "^r-[a-z0-9]{4,32}$",
+			},
+		},
+		Resources: map[string]any{
+			"LoggingProtectionSCP": cfn.Resource("AWS::Organizations::Policy", map[string]any{
+				"Name":        "ground-logging-protection",
+				"Description": "Deny disabling CloudTrail and Config — protects ground logging infrastructure",
+				"Type":        "SERVICE_CONTROL_POLICY",
+				"Content":     string(scpJSON),
+				"TargetIds":   []any{map[string]string{"Ref": "OrgRootId"}},
+				"Tags":        []map[string]string{cfn.Tag("managed-by", "ground")},
+			}),
+		},
 		Outputs: map[string]any{
-			"GuardDutyEnabled": map[string]any{
-				"Description": "GuardDuty detector status",
-				"Value":       s.cfg.GuardDuty,
-			},
-			"SecurityHubEnabled": map[string]any{
-				"Description": "Security Hub status",
-				"Value":       s.cfg.SecurityHub,
-			},
-			"MacieEnabled": map[string]any{
-				"Description": "Macie session status",
-				"Value":       s.cfg.Macie,
+			"LoggingProtectionSCPId": map[string]any{
+				"Description": "ID of the logging-protection SCP attached to the org root",
+				"Value":       map[string]any{"Ref": "LoggingProtectionSCP"},
+				"Export":      map[string]string{"Name": "ground-logging-protection-scp-id"},
 			},
 		},
 	}, nil

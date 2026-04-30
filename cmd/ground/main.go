@@ -14,6 +14,7 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
+	"github.com/provabl/ground/internal/config"
 	"github.com/provabl/ground/internal/deploy"
 	"github.com/provabl/ground/internal/iac"
 	"github.com/provabl/ground/internal/stack/accounts"
@@ -363,20 +364,26 @@ func runGenerateIaC(configPath, format string) error {
 
 // GroundMeta is the JSON structure produced by `ground export-metadata`.
 // Consumed by `attest init --ground-meta` to skip live AWS prerequisite checks.
+//
+// Detection services (GuardDuty, Security Hub, Macie) are NOT included here —
+// ground does not deploy them. attest discovers and manages detection services
+// based on active compliance frameworks via 'attest compile' + 'attest apply'.
 type GroundMeta struct {
-	GroundVersion             string `json:"ground_version"`
-	Region                    string `json:"region"`
-	CloudTrailEnabled         bool   `json:"cloudtrail_enabled"`
-	ConfigEnabled             bool   `json:"config_enabled"`
-	GuardDutyEnabled          bool   `json:"guardduty_enabled"`
-	SecurityHubEnabled        bool   `json:"security_hub_enabled"`
-	LogArchiveAccountID       string `json:"log_archive_account_id,omitempty"`
-	IdentityCenterInstanceARN string `json:"identity_center_instance_arn,omitempty"`
+	GroundVersion             string                  `json:"ground_version"`
+	Region                    string                  `json:"region"`
+	CloudTrailEnabled         bool                    `json:"cloudtrail_enabled"`
+	ConfigEnabled             bool                    `json:"config_enabled"`
+	LogArchiveAccountID       string                  `json:"log_archive_account_id,omitempty"`
+	IdentityCenterInstanceARN string                  `json:"identity_center_instance_arn,omitempty"`
+	// ExternalServices records non-AWS services declared in ground.yaml.
+	// attest uses this to assess controls satisfied by those services.
+	ExternalServices          []config.ExternalService `json:"external_services,omitempty"`
 }
 
 func exportMetadataCmd() *cobra.Command {
 	var outputPath string
 	var region string
+	var configPath string
 
 	cmd := &cobra.Command{
 		Use:   "export-metadata",
@@ -385,18 +392,19 @@ func exportMetadataCmd() *cobra.Command {
 Pass this file to 'attest init --ground-meta' to skip live AWS prerequisite checks.
 
 Example:
-  ground export-metadata --output ground-meta.json
+  ground export-metadata --config ground.yaml --output ground-meta.json
   attest init --region us-east-1 --ground-meta ground-meta.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExportMetadata(region, outputPath)
+			return runExportMetadata(region, configPath, outputPath)
 		},
 	}
 	cmd.Flags().StringVar(&outputPath, "output", "ground-meta.json", "output file path")
 	cmd.Flags().StringVar(&region, "region", "us-east-1", "AWS region to query")
+	cmd.Flags().StringVar(&configPath, "config", "ground.yaml", "ground config file (for external service declarations)")
 	return cmd
 }
 
-func runExportMetadata(region, outputPath string) error {
+func runExportMetadata(region, configPath, outputPath string) error {
 	ctx := context.Background()
 	deployer, err := deploy.New(ctx, region)
 	if err != nil {
@@ -408,6 +416,12 @@ func runExportMetadata(region, outputPath string) error {
 		Region:        region,
 	}
 
+	// Load config to capture external service declarations.
+	if cfg, cfgErr := config.Load(configPath); cfgErr == nil {
+		meta.ExternalServices = cfg.Security.ExternalServices
+	}
+	// If config not found, ExternalServices stays nil — non-fatal.
+
 	// Infer which services are deployed from stack status.
 	loggingStatus, _ := deployer.Status(ctx, "ground-logging")
 	securityStatus, _ := deployer.Status(ctx, "ground-security")
@@ -416,10 +430,7 @@ func runExportMetadata(region, outputPath string) error {
 		meta.CloudTrailEnabled = true
 		meta.ConfigEnabled = true
 	}
-	if securityStatus == "CREATE_COMPLETE" || securityStatus == "UPDATE_COMPLETE" {
-		meta.GuardDutyEnabled = true
-		meta.SecurityHubEnabled = true
-	}
+	_ = securityStatus // logging-protection SCP deployed; detection services are attest's responsibility
 
 	// Check accounts stack for Identity Center instance ARN output.
 	accountsStatus, _ := deployer.Status(ctx, "ground-accounts")
@@ -438,10 +449,11 @@ func runExportMetadata(region, outputPath string) error {
 	}
 
 	fmt.Printf("Ground metadata written to %s\n", outputPath)
-	fmt.Printf("  CloudTrail:    %v\n", meta.CloudTrailEnabled)
-	fmt.Printf("  Config:        %v\n", meta.ConfigEnabled)
-	fmt.Printf("  GuardDuty:     %v\n", meta.GuardDutyEnabled)
-	fmt.Printf("  Security Hub:  %v\n", meta.SecurityHubEnabled)
+	fmt.Printf("  CloudTrail:          %v\n", meta.CloudTrailEnabled)
+	fmt.Printf("  Config:              %v\n", meta.ConfigEnabled)
+	fmt.Printf("  External services:   %d declared\n", len(meta.ExternalServices))
+	fmt.Printf("\nNote: detection services (GuardDuty, Security Hub, Macie) are managed by attest,\n")
+	fmt.Printf("      not ground. Run 'attest compile' then 'attest apply' to enable them.\n")
 	fmt.Printf("\nUsage: attest init --region %s --ground-meta %s\n", region, outputPath)
 	return nil
 }

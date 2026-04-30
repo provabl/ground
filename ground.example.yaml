@@ -30,11 +30,52 @@ identity:
 logging:
   retention_days: 365
 
+# Security detection services (GuardDuty, Security Hub, Macie) are NOT configured
+# here — that is attest's responsibility after 'attest compile' selects the correct
+# standards for your active compliance frameworks.
+#
+# Declare any non-AWS services deployed in your SRE so attest can assess which
+# compliance controls they satisfy (e.g., CrowdStrike satisfies endpoint protection
+# controls, Globus with BAA satisfies HIPAA data-transfer controls).
 security:
-  guardduty: true       # strongly recommended — low cost, required for attest posture assessment
-  security_hub: true    # recommended — NIST 800-53 standard enabled automatically
-  macie: false          # opt-in: priced per GB scanned + per S3 bucket; enable only if you need
-                        # automated PHI/PII discovery (HIPAA environments with large datasets)
+  external_services:
+    # CrowdStrike Falcon — endpoint detection and response (FedRAMP High authorized)
+    - name: crowdstrike-falcon
+      vendor: CrowdStrike
+      category: edr
+      features: [fedramp-high, soc2-type2]
+      scope: []  # empty = org-wide
+
+    # Globus — research data transfer platform
+    # High Assurance mode required for dbGaP, HIPAA, and CUI datasets.
+    # Globus has a BAA for HIPAA-covered data flows.
+    - name: globus
+      vendor: Globus / University of Chicago
+      category: data-transfer
+      features: [baa, high-assurance, fedramp-moderate]
+      scope: [SensitiveResearch, NIHGenomic, HIPAAResearch]
+      notes: "High Assurance enabled; BAA signed 2025-01. Required for dbGaP transfers."
+
+    # Splunk — SIEM (comment out if using a different SIEM or native CloudWatch)
+    # - name: splunk-cloud
+    #   vendor: Splunk
+    #   category: siem
+    #   features: [fedramp-moderate]
+    #   scope: []
+
+    # Palo Alto Prisma Cloud — CSPM/CWPP
+    # - name: prisma-cloud
+    #   vendor: Palo Alto Networks
+    #   category: cspm
+    #   features: [soc2-type2]
+    #   scope: []
+
+    # Tenable.io — vulnerability scanning
+    # - name: tenable-io
+    #   vendor: Tenable
+    #   category: vuln-scanning
+    #   features: [fedramp-moderate]
+    #   scope: []
 
 tagging:
   required_tags:

@@ -149,19 +149,20 @@ graph LR
 
       <!-- Security Baseline -->
       <section id="security" class="section" aria-labelledby="sec-heading">
-        <h2 id="sec-heading">Security Baseline (Phase 1)</h2>
-        <p class="section-intro">The security stack is the <strong>second stack deployed</strong> by <code>ground deploy</code>. It enables GuardDuty, Security Hub, and Macie immediately — you do not need to enable them separately before running <code>attest scan</code>.</p>
-        <p class="section-intro">Unlike most templates that ship these disabled, ground turns them on by default. You can opt out in <code>ground.yaml</code>, but the burden is explicit and attest will report the gap.</p>
+        <h2 id="sec-heading">Logging Protection &amp; External Services</h2>
+        <p class="section-intro">Ground deploys structural plumbing only. <strong>Security detection services are not deployed by ground</strong> — GuardDuty, Security Hub, and Macie are activated by <code>attest apply</code> after <code>attest compile</code> determines which standard matches your active compliance frameworks. Ground cannot know which standard applies without knowing which frameworks you're using.</p>
+
         <div class="arch-note" style="margin-bottom:1.25rem;">
-          <strong>Management account scope (current):</strong> The CloudFormation resources create GuardDuty, Security Hub, and Macie in the management account. For full org-wide coverage — where every member account is automatically enrolled — you need to additionally configure a delegated admin account (Security Tooling account) and enable auto-enrolment. That automation is planned for a future ground release. In the meantime, enable these services in member accounts manually or via AWS CLI.
+          <strong>What ground's security stack does:</strong> Deploys a single Service Control Policy (SCP) that denies disabling CloudTrail and Config — the logging infrastructure ground itself deployed. This SCP cannot be bypassed by member account admins.
+        </div>
+        <div class="arch-note" style="margin-bottom:1.25rem;">
+          <strong>Non-AWS services:</strong> Declare services like Globus, CrowdStrike, Splunk, Palo Alto Prisma, and Tenable in <code>ground.yaml</code> under <code>security.external_services</code>. Ground exports these declarations to <code>ground-meta.json</code>; attest reads them to assess which compliance controls they satisfy. Ground does not deploy, configure, or verify these services.
         </div>
 
         <div class="mermaid">
 graph TD
     subgraph "ground deploy — security stack"
-        GD["GuardDuty<br/><i>detector in mgmt account<br/>all data sources enabled<br/>org-wide: delegated admin needed</i>"]
-        SH["Security Hub<br/><i>enabled in mgmt account<br/>NIST 800-53 Rev 5 standard<br/>org-wide: delegated admin needed</i>"]
-        MACIE["Macie<br/><i>opt-in (default: false)<br/>charged per GB + per bucket<br/>enable for PHI/PII discovery</i>"]
+        SCP["Logging-Protection SCP<br/><i>Deny: cloudtrail:DeleteTrail<br/>Deny: cloudtrail:StopLogging<br/>Deny: config:StopConfigurationRecorder<br/>Attached to org root</i>"]
     end
 
     subgraph "ground deploy — logging stack"
@@ -170,25 +171,35 @@ graph TD
         AUDIT["S3 Audit Bucket<br/><i>KMS encrypted<br/>object-locked (GOVERNANCE)<br/>365-day retention</i>"]
     end
 
-    subgraph "attest reads"
-        SCAN["attest scan<br/><i>reads Config rules<br/>reads Security Hub<br/>computes posture</i>"]
+    subgraph "ground.yaml declarations"
+        EXT["External Services<br/><i>Globus (data-transfer, BAA, high-assurance)<br/>CrowdStrike (EDR, FedRAMP High)<br/>Splunk (SIEM)<br/>Palo Alto Prisma (CSPM)</i>"]
     end
 
+    subgraph "attest apply — after attest compile"
+        GD["GuardDuty<br/><i>activated by attest apply<br/>standard: framework-appropriate</i>"]
+        SH["Security Hub<br/><i>activated by attest apply<br/>standard: framework-appropriate<br/>(NIST 800-53, FSBP, FedRAMP, CIS)</i>"]
+        SCAN["attest scan<br/><i>reads Config rules<br/>reads Security Hub findings<br/>computes posture</i>"]
+    end
+
+    SCP -->|"protects"| CT
+    SCP -->|"protects"| CONFIG
     CT -->|"logs to"| AUDIT
     CONFIG -->|"delivers to"| AUDIT
+    EXT -->|"exported to ground-meta.json"| SCAN
     GD -->|"findings to"| SH
     SH --> SCAN
     CONFIG --> SCAN
 
-    style GD fill:#fef9c3,stroke:#d97706,color:#44300e
-    style SH fill:#fef9c3,stroke:#d97706,color:#44300e
-    style MACIE fill:#fef9c3,stroke:#d97706,color:#44300e
+    style SCP fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
     style CT fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
     style CONFIG fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
     style AUDIT fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    style EXT fill:#f3e8ff,stroke:#7c3aed,color:#2e1065
+    style GD fill:#fef9c3,stroke:#d97706,color:#44300e
+    style SH fill:#fef9c3,stroke:#d97706,color:#44300e
     style SCAN fill:#dcfce7,stroke:#15803d,color:#052e16
         </div>
-        <p class="diagram-caption">Figure 3 — Security baseline and logging. attest reads Config rules and Security Hub findings during <code>attest scan</code> to compute compliance posture. The audit bucket is the ground truth for all audit evidence.</p>
+        <p class="diagram-caption">Figure 3 — Ground deploys logging plumbing and a protection SCP. Detection services (yellow) are activated by attest after framework selection. Non-AWS services (purple) are declared in ground.yaml and consumed by attest during compliance assessment.</p>
       </section>
 
       <!-- IAM / Identity Center -->

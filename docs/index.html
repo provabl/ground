@@ -77,8 +77,8 @@
                         <p>Org-wide CloudTrail, VPC Flow Logs, AWS Config recorder, centralized S3 audit bucket with object-level logging.</p>
                     </div>
                     <div class="deploy-card">
-                        <h3>Security baseline</h3>
-                        <p>GuardDuty, Security Hub, and Macie — all enabled by default across the org. Unlike most templates, these are on, not off.</p>
+                        <h3>Logging protection</h3>
+                        <p>An SCP that denies disabling CloudTrail and Config org-wide. Detection services (GuardDuty, Security Hub) are activated by <code>attest apply</code> — ground cannot know the correct standard without knowing your active frameworks.</p>
                     </div>
                     <div class="deploy-card">
                         <h3>Tested policies</h3>
@@ -90,6 +90,8 @@
                     <ul>
                         <li>Compliance claims — that is attest's job after <code>attest scan</code></li>
                         <li>Framework-specific SCPs — that is <code>attest compile</code>'s job</li>
+                        <li>Detection services (GuardDuty, Security Hub, Macie) — that is <code>attest apply</code>'s job</li>
+                        <li>Non-AWS services (CrowdStrike, Globus, Splunk, Prisma) — declare them in <code>ground.yaml</code>, attest assesses them</li>
                         <li>User training — that is qualify's job</li>
                     </ul>
                 </div>
