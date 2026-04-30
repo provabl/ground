@@ -17,6 +17,7 @@ import (
 	"github.com/provabl/ground/internal/config"
 	"github.com/provabl/ground/internal/deploy"
 	"github.com/provabl/ground/internal/iac"
+	"github.com/provabl/ground/internal/probe"
 	"github.com/provabl/ground/internal/stack/accounts"
 	"github.com/provabl/ground/internal/stack/identity"
 	"github.com/provabl/ground/internal/stack/logging"
@@ -377,7 +378,10 @@ type GroundMeta struct {
 	IdentityCenterInstanceARN string                  `json:"identity_center_instance_arn,omitempty"`
 	// ExternalServices records non-AWS services declared in ground.yaml.
 	// attest uses this to assess controls satisfied by those services.
-	ExternalServices          []config.ExternalService `json:"external_services,omitempty"`
+	ExternalServices []config.ExternalService           `json:"external_services,omitempty"`
+	// ProbeResults records verification results from ground-probe-* binaries.
+	// Keyed by service name. nil value = no probe configured for that service.
+	ProbeResults     map[string]*probe.ProbeResult      `json:"probe_results,omitempty"`
 }
 
 func exportMetadataCmd() *cobra.Command {
@@ -416,9 +420,24 @@ func runExportMetadata(region, configPath, outputPath string) error {
 		Region:        region,
 	}
 
-	// Load config to capture external service declarations.
+	// Load config to capture external service declarations and run any configured probes.
 	if cfg, cfgErr := config.Load(configPath); cfgErr == nil {
 		meta.ExternalServices = cfg.Security.ExternalServices
+		// Run probes for services that have one configured.
+		if len(cfg.Security.ExternalServices) > 0 {
+			probeResults := probe.RunAll(ctx, cfg.Security.ExternalServices)
+			// Only include probe results if at least one probe was configured.
+			hasProbe := false
+			for _, r := range probeResults {
+				if r != nil {
+					hasProbe = true
+					break
+				}
+			}
+			if hasProbe {
+				meta.ProbeResults = probeResults
+			}
+		}
 	}
 	// If config not found, ExternalServices stays nil — non-fatal.
 
@@ -452,6 +471,17 @@ func runExportMetadata(region, configPath, outputPath string) error {
 	fmt.Printf("  CloudTrail:          %v\n", meta.CloudTrailEnabled)
 	fmt.Printf("  Config:              %v\n", meta.ConfigEnabled)
 	fmt.Printf("  External services:   %d declared\n", len(meta.ExternalServices))
+	for _, svc := range meta.ExternalServices {
+		if r, ok := meta.ProbeResults[svc.Name]; ok && r != nil {
+			if r.Error != "" {
+				fmt.Printf("    %s: probe error — %s (using declaration)\n", svc.Name, r.Error)
+			} else {
+				fmt.Printf("    %s: verified %v\n", svc.Name, r.FeaturesVerified)
+			}
+		} else if svc.Probe != "" {
+			fmt.Printf("    %s: no probe result\n", svc.Name)
+		}
+	}
 	fmt.Printf("\nNote: detection services (GuardDuty, Security Hub, Macie) are managed by attest,\n")
 	fmt.Printf("      not ground. Run 'attest compile' then 'attest apply' to enable them.\n")
 	fmt.Printf("\nUsage: attest init --region %s --ground-meta %s\n", region, outputPath)

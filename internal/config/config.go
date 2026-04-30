@@ -63,12 +63,18 @@ type SecurityConfig struct {
 // Category options: edr, siem, cspm, cwpp, data-transfer, vuln-scanning, identity, research-platform
 // Feature options: fedramp-high, fedramp-moderate, baa, hipaa-compliant, high-assurance, soc2-type2, iso27001
 type ExternalService struct {
-	Name     string   `yaml:"name"`               // slug, e.g., "crowdstrike-falcon"
-	Vendor   string   `yaml:"vendor"`             // display name, e.g., "CrowdStrike"
-	Category string   `yaml:"category"`           // edr, siem, cspm, data-transfer, ...
-	Features []string `yaml:"features,omitempty"` // fedramp-high, baa, high-assurance, ...
-	Scope    []string `yaml:"scope,omitempty"`    // OU names; empty = org-wide
-	Notes    string   `yaml:"notes,omitempty"`    // free-text operator context
+	Name        string         `yaml:"name"`               // slug, e.g., "crowdstrike-falcon"
+	Vendor      string         `yaml:"vendor"`             // display name, e.g., "CrowdStrike"
+	Category    string         `yaml:"category"`           // edr, siem, cspm, data-transfer, ...
+	Features    []string       `yaml:"features,omitempty"` // fedramp-high, baa, high-assurance, ...
+	Scope       []string       `yaml:"scope,omitempty"`    // OU names; empty = org-wide
+	Notes       string         `yaml:"notes,omitempty"`    // free-text operator context
+	// Probe is the name or path of a ground-probe-* binary that verifies this service's
+	// declarations via its API. Optional — if absent, declarations are used as-is.
+	// The probe binary receives ProbeConfig as JSON on stdin and writes a ProbeResult to stdout.
+	// Binary convention: ground-probe-<name> (e.g., ground-probe-globus).
+	Probe       string         `yaml:"probe,omitempty"`
+	ProbeConfig map[string]any `yaml:"probe_config,omitempty"`
 }
 
 type TaggingConfig struct {
