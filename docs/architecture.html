@@ -150,13 +150,17 @@ graph LR
       <!-- Security Baseline -->
       <section id="security" class="section" aria-labelledby="sec-heading">
         <h2 id="sec-heading">Security Baseline (Phase 1)</h2>
-        <p class="section-intro">The security stack enables three AWS detection services across the entire organization. Unlike most templates that ship these disabled, ground turns them on by default — you can opt out, but the burden is explicit.</p>
+        <p class="section-intro">The security stack is the <strong>second stack deployed</strong> by <code>ground deploy</code>. It enables GuardDuty, Security Hub, and Macie immediately — you do not need to enable them separately before running <code>attest scan</code>.</p>
+        <p class="section-intro">Unlike most templates that ship these disabled, ground turns them on by default. You can opt out in <code>ground.yaml</code>, but the burden is explicit and attest will report the gap.</p>
+        <div class="arch-note" style="margin-bottom:1.25rem;">
+          <strong>Management account scope (current):</strong> The CloudFormation resources create GuardDuty, Security Hub, and Macie in the management account. For full org-wide coverage — where every member account is automatically enrolled — you need to additionally configure a delegated admin account (Security Tooling account) and enable auto-enrolment. That automation is planned for a future ground release. In the meantime, enable these services in member accounts manually or via AWS CLI.
+        </div>
 
         <div class="mermaid">
 graph TD
     subgraph "ground deploy — security stack"
-        GD["GuardDuty<br/><i>org-wide detector<br/>all data sources enabled<br/>findings → Security Tooling</i>"]
-        SH["Security Hub<br/><i>org-wide<br/>NIST 800-53 Rev 5 standard<br/>findings aggregated</i>"]
+        GD["GuardDuty<br/><i>detector in mgmt account<br/>all data sources enabled<br/>org-wide: delegated admin needed</i>"]
+        SH["Security Hub<br/><i>enabled in mgmt account<br/>NIST 800-53 Rev 5 standard<br/>org-wide: delegated admin needed</i>"]
         MACIE["Macie<br/><i>org-wide session<br/>PII/PHI discovery<br/>15-min publish frequency</i>"]
     end
 
