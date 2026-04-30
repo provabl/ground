@@ -53,6 +53,10 @@ test-driven approach used across the Provabl suite.
 
 🚧 **Under active development** — initial CDK stacks being built.
 
+## Open source
+
+ground is fully open source (Apache 2.0) with no commercial tier. It is the structural foundation that [attest](https://attest.provabl.dev) and [qualify](https://qualify.provabl.dev) build on. See [COMMERCIAL.md](COMMERCIAL.md).
+
 ## License
 
-Apache 2.0
+Apache 2.0. Copyright 2026 Scott Friedman.
