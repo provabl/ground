@@ -451,12 +451,12 @@ func runExportMetadata(region, configPath, outputPath string) error {
 	}
 	_ = securityStatus // logging-protection SCP deployed; detection services are attest's responsibility
 
-	// Check accounts stack for Identity Center instance ARN output.
+	// Read Identity Center instance ARN from the accounts stack output.
 	accountsStatus, _ := deployer.Status(ctx, "ground-accounts")
 	if accountsStatus == "CREATE_COMPLETE" || accountsStatus == "UPDATE_COMPLETE" {
-		// Identity Center ARN would be in stack outputs — placeholder for now.
-		// Full implementation reads CloudFormation stack outputs.
-		meta.IdentityCenterInstanceARN = "" // populated when accounts stack output is available
+		if arn, outErr := deployer.StackOutput(ctx, "ground-accounts", "IdentityCenterInstanceARN"); outErr == nil {
+			meta.IdentityCenterInstanceARN = arn
+		}
 	}
 
 	data, err := json.MarshalIndent(meta, "", "  ")

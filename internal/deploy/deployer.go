@@ -113,6 +113,27 @@ func (d *Deployer) Deploy(ctx context.Context, stackName, templateBody string) (
 }
 
 // Status returns the current status of a CloudFormation stack, or "NOT_FOUND".
+// StackOutput returns a specific CloudFormation stack output value by key.
+// Returns ("", nil) if the stack doesn't exist or the output key is absent.
+func (d *Deployer) StackOutput(ctx context.Context, stackName, outputKey string) (string, error) {
+	stack, err := d.describe(ctx, stackName)
+	if err != nil {
+		if isNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("describe %s: %w", stackName, err)
+	}
+	if stack == nil {
+		return "", nil
+	}
+	for _, o := range stack.Outputs {
+		if aws.ToString(o.OutputKey) == outputKey {
+			return aws.ToString(o.OutputValue), nil
+		}
+	}
+	return "", nil
+}
+
 func (d *Deployer) Status(ctx context.Context, stackName string) (string, error) {
 	stack, err := d.describe(ctx, stackName)
 	if err != nil {
