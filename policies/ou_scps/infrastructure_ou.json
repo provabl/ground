@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyWorkloadServices",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:StartInstances",
+        "rds:CreateDBInstance",
+        "rds:CreateDBCluster",
+        "lambda:CreateFunction",
+        "sagemaker:CreateNotebookInstance",
+        "sagemaker:CreateTrainingJob",
+        "ecs:CreateCluster",
+        "eks:CreateCluster"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": [
+            "us-east-1", "us-east-2", "us-west-1", "us-west-2"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyPublicS3",
+      "Effect": "Deny",
+      "Action": [
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketAcl"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "s3:x-amz-acl": ["public-read", "public-read-write", "authenticated-read"]
+        }
+      }
+    }
+  ]
+}

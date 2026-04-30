@@ -1,0 +1,88 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyPublicS3ACLs",
+      "Effect": "Deny",
+      "Action": ["s3:PutBucketAcl", "s3:PutObjectAcl"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "s3:x-amz-acl": ["public-read", "public-read-write", "authenticated-read"]
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedS3Objects",
+      "Effect": "Deny",
+      "Action": ["s3:PutObject"],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:x-amz-server-side-encryption": "aws:kms"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedEBS",
+      "Effect": "Deny",
+      "Action": ["ec2:CreateVolume"],
+      "Resource": "*",
+      "Condition": {
+        "Bool": {
+          "ec2:Encrypted": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyCloudTrailDisable",
+      "Effect": "Deny",
+      "Action": [
+        "cloudtrail:DeleteTrail",
+        "cloudtrail:StopLogging",
+        "cloudtrail:UpdateTrail"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyNonUSRegions",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": [
+            "us-east-1", "us-east-2", "us-west-1", "us-west-2"
+          ]
+        },
+        "Bool": {
+          "aws:PrincipalIsAWSService": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyNonFedRAMPServices",
+      "Effect": "Deny",
+      "Action": [
+        "clouddirectory:*",
+        "mturk:*",
+        "appstream:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyCrossAccountTrustToResearch",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateRole",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "iam:PolicyDocument": "*research-open*"
+        }
+      }
+    }
+  ]
+}

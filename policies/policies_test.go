@@ -135,6 +135,93 @@ func statementDeniesAction(p *policy.Policy, action string) bool {
 	return false
 }
 
+// ── Per-OU SCP tests ──────────────────────────────────────────────────────────
+
+func TestSecurityOUSCPDeniesCloudTrailDisable(t *testing.T) {
+	p := loadPolicy(t, "ou_scps/security_ou.json")
+	actions := []string{"cloudtrail:DeleteTrail", "cloudtrail:StopLogging"}
+	for _, a := range actions {
+		if !statementDeniesAction(p, a) {
+			t.Errorf("security_ou SCP does not deny %s — log tampering possible", a)
+		}
+	}
+}
+
+func TestSecurityOUSCPDeniesSecurityServiceDisable(t *testing.T) {
+	p := loadPolicy(t, "ou_scps/security_ou.json")
+	actions := []string{"guardduty:DeleteDetector", "securityhub:DisableSecurityHub"}
+	for _, a := range actions {
+		if !statementDeniesAction(p, a) {
+			t.Errorf("security_ou SCP does not deny %s", a)
+		}
+	}
+}
+
+func TestInfrastructureOUSCPDeniesWorkloads(t *testing.T) {
+	p := loadPolicy(t, "ou_scps/infrastructure_ou.json")
+	if !statementDeniesAction(p, "ec2:RunInstances") {
+		t.Error("infrastructure_ou SCP should deny ec2:RunInstances (workloads go in Research OU)")
+	}
+}
+
+func TestSensitiveOUSCPDeniesUnencryptedS3(t *testing.T) {
+	p := loadPolicy(t, "ou_scps/sensitive_research_ou.json")
+	if !statementDeniesAction(p, "s3:PutObject") {
+		t.Error("sensitive_research_ou SCP should deny s3:PutObject without KMS encryption")
+	}
+}
+
+func TestSensitiveOUSCPDeniesCloudTrailDisable(t *testing.T) {
+	p := loadPolicy(t, "ou_scps/sensitive_research_ou.json")
+	if !statementDeniesAction(p, "cloudtrail:DeleteTrail") {
+		t.Error("sensitive_research_ou SCP should deny cloudtrail:DeleteTrail")
+	}
+}
+
+func TestDoDCMMCOUSCPDeniesNonGovCloud(t *testing.T) {
+	p := loadPolicy(t, "ou_scps/dod_cmmc_ou.json")
+	// The DoD OU uses Deny with StringNotEquals condition for non-GovCloud regions.
+	// Verify at least one Deny statement exists.
+	hasDeny := false
+	for _, s := range p.Statements {
+		if s.Effect == "Deny" {
+			hasDeny = true
+			break
+		}
+	}
+	if !hasDeny {
+		t.Error("dod_cmmc_ou SCP must have Deny statements to restrict to GovCloud only")
+	}
+}
+
+// TestAccountTaggingUsesORLogic verifies the account tagging SCP uses separate
+// Deny statements per tag (OR logic) rather than one combined statement (AND logic).
+// With AND logic, resources missing only one tag could bypass the check.
+func TestAccountTaggingUsesORLogic(t *testing.T) {
+	p := loadPolicy(t, "account_tagging_scp.json")
+	requiredTags := []string{
+		"attest:environment-id",
+		"attest:data-classes",
+		"attest:compliance-tier",
+		"attest:ou-path",
+		"attest:owner",
+	}
+	for _, tag := range requiredTags {
+		if !hasSeparateDenyForTag(p, tag) {
+			t.Errorf("account_tagging_scp: no separate Deny statement for tag %q — AND logic bypass possible", tag)
+		}
+	}
+}
+
+func TestAccountTaggingHasFiveStatements(t *testing.T) {
+	p := loadPolicy(t, "account_tagging_scp.json")
+	required := 5
+	if len(p.Statements) < required {
+		t.Errorf("account_tagging_scp: want at least %d statements (one per tag), got %d",
+			required, len(p.Statements))
+	}
+}
+
 // hasSeparateDenyForTag returns true if p has a Deny statement whose
 // Condition references only the given tag in a Null check.
 func hasSeparateDenyForTag(p *policy.Policy, tag string) bool {

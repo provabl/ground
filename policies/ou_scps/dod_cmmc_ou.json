@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowGovCloudOnly",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": [
+            "us-gov-east-1",
+            "us-gov-west-1"
+          ]
+        },
+        "Bool": {
+          "aws:PrincipalIsAWSService": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyCommercialRegionAPIs",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:*",
+        "s3:*",
+        "rds:*",
+        "sagemaker:*",
+        "lambda:*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": [
+            "us-gov-east-1",
+            "us-gov-west-1"
+          ]
+        }
+      }
+    }
+  ]
+}
