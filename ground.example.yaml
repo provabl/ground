@@ -31,9 +31,10 @@ logging:
   retention_days: 365
 
 security:
-  guardduty: true
-  security_hub: true
-  macie: true
+  guardduty: true       # strongly recommended — low cost, required for attest posture assessment
+  security_hub: true    # recommended — NIST 800-53 standard enabled automatically
+  macie: false          # opt-in: priced per GB scanned + per S3 bucket; enable only if you need
+                        # automated PHI/PII discovery (HIPAA environments with large datasets)
 
 tagging:
   required_tags:

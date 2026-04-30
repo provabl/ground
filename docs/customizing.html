@@ -155,11 +155,11 @@ security:
         </div>
 
         <div class="does-not" style="margin-top:1rem;">
-          <h3>Compliance impact of disabling services</h3>
+          <h3>Cost and compliance impact</h3>
           <ul>
-            <li>Disabling <strong>GuardDuty</strong> — gap against NIST 800-171 §3.14.7, CMMC SI.L2-3.14.7, HIPAA §164.308(a)(1)</li>
-            <li>Disabling <strong>Security Hub</strong> — attest loses posture data; scan results will be incomplete</li>
-            <li>Disabling <strong>Macie</strong> — gap against HIPAA minimum necessary and some NIH GDS data discovery requirements</li>
+            <li><strong>GuardDuty</strong> — low cost. Keep enabled. Disabling creates gaps against NIST 800-171 §3.14.7, CMMC SI.L2-3.14.7, HIPAA §164.308(a)(1)</li>
+            <li><strong>Security Hub</strong> — low fixed cost per check. Keep enabled. attest reads posture from Security Hub; disabling makes scan results incomplete</li>
+            <li><strong>Macie</strong> — <strong>expensive at scale: charged per GB scanned + per S3 bucket per month.</strong> Default is <code>false</code>. Enable only when you specifically need automated PII/PHI discovery. Check <a href="https://aws.amazon.com/macie/pricing/" target="_blank" rel="noopener">AWS Macie pricing</a> before enabling across the org</li>
           </ul>
         </div>
       </section>

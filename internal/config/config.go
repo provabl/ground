@@ -111,9 +111,9 @@ func DefaultConfig() *Config {
 			RetentionDays: 365,
 		},
 		Security: SecurityConfig{
-			GuardDuty:   true,
-			SecurityHub: true,
-			Macie:       true,
+			GuardDuty:   true,   // strongly recommended — low cost, required for attest posture
+			SecurityHub: true,   // recommended — required for NIST 800-53 control assessment
+			Macie:       false,  // opt-in: charged per GB scanned + per bucket; enable only when needed for PHI/PII discovery
 		},
 		Tagging: TaggingConfig{
 			RequiredTags: []string{

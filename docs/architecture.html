@@ -161,7 +161,7 @@ graph TD
     subgraph "ground deploy — security stack"
         GD["GuardDuty<br/><i>detector in mgmt account<br/>all data sources enabled<br/>org-wide: delegated admin needed</i>"]
         SH["Security Hub<br/><i>enabled in mgmt account<br/>NIST 800-53 Rev 5 standard<br/>org-wide: delegated admin needed</i>"]
-        MACIE["Macie<br/><i>org-wide session<br/>PII/PHI discovery<br/>15-min publish frequency</i>"]
+        MACIE["Macie<br/><i>opt-in (default: false)<br/>charged per GB + per bucket<br/>enable for PHI/PII discovery</i>"]
     end
 
     subgraph "ground deploy — logging stack"
