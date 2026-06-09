@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ## [Unreleased]
 
+### Added
+
+- **`policies/nitro_attestation_scp.json`** — an SCP that denies sensitive-data actions
+  (`s3:GetObject`, `sagemaker:CreateTrainingJob`, …) unless the principal carries
+  `aws:PrincipalTag/attest:nitro-attested == "true"`. The IAM-layer half of the evidence kernel's
+  runtime attestation (the nitro provider produces the verdict; a tag carries it; this SCP gates on
+  it). Tested by `TestNitroAttestationSCPRequiresAttestedTag`. Note: nothing writes the
+  `attest:nitro-attested` tag yet — that attestation-tagging step is future work, mirroring how
+  qualify writes `attest:*` training tags.
+
 ## [0.2.0] - 2026-04-30
 
 ### Added

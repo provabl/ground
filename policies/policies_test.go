@@ -222,6 +222,63 @@ func TestAccountTaggingHasFiveStatements(t *testing.T) {
 	}
 }
 
+// TestNitroAttestationSCPRequiresAttestedTag verifies the nitro-attestation SCP
+// denies sensitive-data actions unless the principal carries
+// aws:PrincipalTag/attest:nitro-attested == "true". This is the IAM-layer half of
+// the evidence kernel's runtime attestation: the nitro provider produces the
+// verdict, a tag carries it, and this SCP gates data access on it.
+func TestNitroAttestationSCPRequiresAttestedTag(t *testing.T) {
+	p := loadPolicy(t, "nitro_attestation_scp.json")
+
+	// Fail-closed: the policy must Deny (never Allow — an Allow would be a no-op).
+	if !p.AllDenyStatements() {
+		t.Error("nitro_attestation_scp must use only Deny statements; an Allow would be a no-op")
+	}
+
+	// The gating condition must be present.
+	if !hasNitroAttestationCondition(p) {
+		t.Error("nitro_attestation_scp must deny on StringNotEquals aws:PrincipalTag/attest:nitro-attested == \"true\"; " +
+			"without it, an unattested principal can access sensitive data")
+	}
+
+	// The sensitive-data actions must be covered by the gated statement.
+	sensitiveActions := []string{
+		"s3:GetObject",
+		"sagemaker:CreateTrainingJob",
+	}
+	for _, action := range sensitiveActions {
+		if !statementDeniesAction(p, action) {
+			t.Errorf("nitro_attestation_scp does not deny %s — unattested data-access path open", action)
+		}
+	}
+}
+
+// hasNitroAttestationCondition returns true if p has a Deny statement whose
+// Condition is StringNotEquals on aws:PrincipalTag/attest:nitro-attested = "true"
+// (deny unless attested — covers both a missing and a non-"true" tag).
+func hasNitroAttestationCondition(p *policy.Policy) bool {
+	const tagKey = "aws:PrincipalTag/attest:nitro-attested"
+	for _, s := range p.Statements {
+		if s.Effect != "Deny" || s.Condition == nil {
+			continue
+		}
+		cond, ok := s.Condition["StringNotEquals"]
+		if !ok {
+			continue
+		}
+		condMap, ok := cond.(map[string]any)
+		if !ok {
+			continue
+		}
+		if val, found := condMap[tagKey]; found {
+			if str, ok := val.(string); ok && str == "true" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // hasSeparateDenyForTag returns true if p has a Deny statement whose
 // Condition references only the given tag in a Null check.
 func hasSeparateDenyForTag(p *policy.Policy, tag string) bool {
