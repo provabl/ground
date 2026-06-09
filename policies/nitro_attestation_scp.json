@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyDataAccessWithoutNitroAttestation",
+      "Effect": "Deny",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "sagemaker:CreateTrainingJob",
+        "sagemaker:CreateNotebookInstance",
+        "sagemaker:CreateProcessingJob",
+        "bedrock:InvokeModel"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalTag/attest:nitro-attested": "true"
+        }
+      }
+    }
+  ]
+}
