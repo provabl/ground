@@ -59,4 +59,4 @@ ground is fully open source (Apache 2.0) with no commercial tier. It is the stru
 
 ## License
 
-Apache 2.0. Copyright 2026 Scott Friedman.
+Apache 2.0. Copyright 2026 Playground Logic LLC.
