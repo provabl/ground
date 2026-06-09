@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
   `attest:nitro-attested` tag yet — that attestation-tagging step is future work, mirroring how
   qualify writes `attest:*` training tags.
 
+### Changed
+
+- Copyright holder normalized to Playground Logic LLC.
+
 ## [0.2.0] - 2026-04-30
 
 ### Added
