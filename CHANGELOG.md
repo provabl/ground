@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Added
 
+- **`ground preflight`** (provabl#16): verifies the calling principal holds the IAM actions `ground
+  deploy` needs (Organizations create/attach/describe, CloudFormation create/update/describe, the
+  `CAPABILITY_NAMED_IAM` create actions) via read-only `iam:SimulatePrincipalPolicy` against the
+  caller ARN. Each action is reported allowed/denied; a denied action prints a remediation and the
+  command exits non-zero. Fail-closed: an unresolvable caller or un-callable simulator is an error,
+  not a pass. New `internal/preflight` (mock-driven tests). Mirrors attest's caller-permission check;
+  the suite tools stay decoupled (each carries its own copy — the kernel is the only shared dep). The
+  per-tool action lists live in the suite's `docs/required-permissions.md`.
 - **AMI-launch gating SCPs** (provabl#13, slice 1 — the IAM-enforcement / Layer-1 half):
   - **`policies/ami_launch_gating_scp.json`** — denies `ec2:RunInstances` unless the AMI carries
     `ec2:ResourceTag/attest:vetted == "true"`. The Deny is scoped to the image ARN

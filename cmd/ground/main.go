@@ -17,6 +17,7 @@ import (
 	"github.com/provabl/ground/internal/config"
 	"github.com/provabl/ground/internal/deploy"
 	"github.com/provabl/ground/internal/iac"
+	"github.com/provabl/ground/internal/preflight"
 	"github.com/provabl/ground/internal/probe"
 	"github.com/provabl/ground/internal/stack/accounts"
 	"github.com/provabl/ground/internal/stack/identity"
@@ -52,9 +53,48 @@ It makes zero compliance claims — attest makes those after 'attest scan'.
 
 	cmd.AddCommand(deployCmd())
 	cmd.AddCommand(validateCmd())
+	cmd.AddCommand(preflightCmd())
 	cmd.AddCommand(statusCmd())
 	cmd.AddCommand(exportMetadataCmd())
 
+	return cmd
+}
+
+func preflightCmd() *cobra.Command {
+	var region string
+	cmd := &cobra.Command{
+		Use:   "preflight",
+		Short: "Verify the calling principal holds the IAM permissions ground needs",
+		Long: `Check, before 'ground deploy', that the calling AWS principal can perform
+ground's required actions (Organizations, CloudFormation, IAM). Uses read-only
+iam:SimulatePrincipalPolicy against the caller — it evaluates, it does not act.
+
+Each required action is reported allowed/denied; a denied action prints a
+remediation and the command exits non-zero. See the suite's
+docs/required-permissions.md for the full list.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			results := preflight.CheckCallerPermissions(cmd.Context(), region)
+			failures := 0
+			for _, r := range results {
+				if r.Status {
+					fmt.Printf("  ✓ %s\n", r.Name)
+					continue
+				}
+				failures++
+				fmt.Printf("  ✗ %s: %s\n", r.Name, r.Detail)
+				if r.Remediation != "" {
+					fmt.Printf("      Remediation: %s\n", r.Remediation)
+				}
+			}
+			fmt.Println()
+			if failures > 0 {
+				return fmt.Errorf("preflight failed: %d required permission(s) missing", failures)
+			}
+			fmt.Println("✓ All required permissions present — ready to 'ground deploy'")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&region, "region", "us-east-1", "AWS region")
 	return cmd
 }
 
@@ -370,18 +410,18 @@ func runGenerateIaC(configPath, format string) error {
 // ground does not deploy them. attest discovers and manages detection services
 // based on active compliance frameworks via 'attest compile' + 'attest apply'.
 type GroundMeta struct {
-	GroundVersion             string                  `json:"ground_version"`
-	Region                    string                  `json:"region"`
-	CloudTrailEnabled         bool                    `json:"cloudtrail_enabled"`
-	ConfigEnabled             bool                    `json:"config_enabled"`
-	LogArchiveAccountID       string                  `json:"log_archive_account_id,omitempty"`
-	IdentityCenterInstanceARN string                  `json:"identity_center_instance_arn,omitempty"`
+	GroundVersion             string `json:"ground_version"`
+	Region                    string `json:"region"`
+	CloudTrailEnabled         bool   `json:"cloudtrail_enabled"`
+	ConfigEnabled             bool   `json:"config_enabled"`
+	LogArchiveAccountID       string `json:"log_archive_account_id,omitempty"`
+	IdentityCenterInstanceARN string `json:"identity_center_instance_arn,omitempty"`
 	// ExternalServices records non-AWS services declared in ground.yaml.
 	// attest uses this to assess controls satisfied by those services.
-	ExternalServices []config.ExternalService           `json:"external_services,omitempty"`
+	ExternalServices []config.ExternalService `json:"external_services,omitempty"`
 	// ProbeResults records verification results from ground-probe-* binaries.
 	// Keyed by service name. nil value = no probe configured for that service.
-	ProbeResults     map[string]*probe.ProbeResult      `json:"probe_results,omitempty"`
+	ProbeResults map[string]*probe.ProbeResult `json:"probe_results,omitempty"`
 }
 
 func exportMetadataCmd() *cobra.Command {
