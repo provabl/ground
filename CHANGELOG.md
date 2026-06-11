@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Changed
 
+- **SLSA L3 release provenance** (provabl#5): `release.yml` now generates provenance via the
+  `slsa-framework/slsa-github-generator` reusable workflow (isolated, non-falsifiable builder)
+  instead of `actions/attest-build-provenance` (L2). One runner cross-compiles all targets and emits
+  a combined `hashes` output for the generator; cosign signatures + attested SBOM retained. Pattern
+  proven on the vet pilot. The L3 proof is produced on the next tag.
 - Copyright holder normalized to Playground Logic LLC.
 
 ## [0.2.0] - 2026-04-30
