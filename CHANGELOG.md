@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
     (including image-scope and vetter-exception regression guards). The runtime half (an instance
     proving it booted the vetted image via PCR0) already exists in nitro/nitrotpm; the producer that
     *writes* `attest:vetted` (vet's AMI vetting) and vendor's per-account deployment are follow-ups.
+  - **Adversarially verified against the live AWS IAM policy simulator** (`policies/scp_simulate_test.go`,
+    build tag `awssim`): a non-vetter forging or stripping `attest:vetted` → `explicitDeny`; the vetter
+    may set it; an unrelated tag key is unaffected; and `RunInstances` is denied for a `false`-tagged
+    OR **untagged** AMI (a missing tag is not "vetted"). The simulator is the faithful test because SCPs
+    never apply to an Organization's management account, so the policy can't be observed denying
+    in-account. `policies/SECURITY.md` documents the matrix + the trust boundary (the gate reduces to
+    who can assume the vetter principal; SCPs don't restrict the management-account root).
 - **`policies/nitro_attestation_scp.json`** — an SCP that denies sensitive-data actions
   (`s3:GetObject`, `sagemaker:CreateTrainingJob`, …) unless the principal carries
   `aws:PrincipalTag/attest:nitro-attested == "true"`. The IAM-layer half of the evidence kernel's
