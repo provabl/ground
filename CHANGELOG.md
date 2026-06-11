@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Added
 
+- **AMI-launch gating SCPs** (provabl#13, slice 1 — the IAM-enforcement / Layer-1 half):
+  - **`policies/ami_launch_gating_scp.json`** — denies `ec2:RunInstances` unless the AMI carries
+    `ec2:ResourceTag/attest:vetted == "true"`. The Deny is scoped to the image ARN
+    (`arn:aws:ec2:*::image/*`) so the tag condition evaluates only against the AMI, not the
+    instance/volumes/ENIs the call also creates (a `Resource:"*"` scope would deny every launch).
+  - **`policies/ami_vetting_lockdown_scp.json`** — denies `ec2:CreateTags`/`ec2:DeleteTags` of the
+    `attest:vetted` key on AMIs for every principal except the designated vetter (an `ArnNotLike`
+    `aws:PrincipalArn` exception). This solves the trust trap — a researcher cannot self-mark an AMI
+    vetted (same "appraised, not asserted" principle as qualify#32's locked `attest:*` tags). The
+    vetter ARN is a deploy-time placeholder (`VETTER_PRINCIPAL_ARN_PLACEHOLDER`) ground/vendor
+    substitutes per account; SCPs cannot parameterize.
+  - Tested by `TestAMILaunchGatingSCPDeniesUnvettedAMIs` and `TestAMIVettingLockdownDeniesTagMutation`
+    (including image-scope and vetter-exception regression guards). The runtime half (an instance
+    proving it booted the vetted image via PCR0) already exists in nitro/nitrotpm; the producer that
+    *writes* `attest:vetted` (vet's AMI vetting) and vendor's per-account deployment are follow-ups.
 - **`policies/nitro_attestation_scp.json`** — an SCP that denies sensitive-data actions
   (`s3:GetObject`, `sagemaker:CreateTrainingJob`, …) unless the principal carries
   `aws:PrincipalTag/attest:nitro-attested == "true"`. The IAM-layer half of the evidence kernel's
