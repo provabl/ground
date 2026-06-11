@@ -302,12 +302,17 @@ func TestAMIVettingLockdownDeniesTagMutation(t *testing.T) {
 		}
 	}
 
-	// The lockdown must (a) target the attest:vetted tag key and (b) carry a
-	// principal exception — without the key scope it denies all tagging; without
-	// the exception even the vetter can't mark an AMI (the gate would be unusable).
-	if !lockdownTargetsVettedKey(p) {
+	// The lockdown must (a) target the attest:vetted tag key AND the attest:pcr*
+	// golden-PCR keys (forging either defeats the gate), and (b) carry a principal
+	// exception — without the key scope it denies all tagging; without the exception
+	// even the vetter can't mark an AMI (the gate would be unusable).
+	if !lockdownTargetsTagKey(p, "attest:vetted") {
 		t.Error("ami_vetting_lockdown_scp must scope to aws:TagKeys [attest:vetted]; " +
 			"a broader scope denies all AMI tagging")
+	}
+	if !lockdownTargetsTagKey(p, "attest:pcr*") {
+		t.Error("ami_vetting_lockdown_scp must also lock the attest:pcr* golden-PCR keys; " +
+			"a forgeable golden PCR would defeat the runtime image binding (provabl#13)")
 	}
 	if !lockdownHasVetterArnException(p) {
 		t.Error("ami_vetting_lockdown_scp must carry an ArnNotLike aws:PrincipalArn exception for the vetter; " +
@@ -378,29 +383,31 @@ func deniesScopedToImageResource(p *policy.Policy, action string) bool {
 	return false
 }
 
-// lockdownTargetsVettedKey returns true if a Deny statement scopes to the
-// attest:vetted tag key via ForAnyValue:StringEquals aws:TagKeys.
-func lockdownTargetsVettedKey(p *policy.Policy) bool {
+// lockdownTargetsTagKey returns true if a Deny statement scopes aws:TagKeys to the
+// given key via a ForAnyValue:StringEquals or ForAnyValue:StringLike condition.
+func lockdownTargetsTagKey(p *policy.Policy, key string) bool {
 	for _, s := range p.Statements {
 		if s.Effect != "Deny" || s.Condition == nil {
 			continue
 		}
-		cond, ok := s.Condition["ForAnyValue:StringEquals"]
-		if !ok {
-			continue
-		}
-		condMap, ok := cond.(map[string]any)
-		if !ok {
-			continue
-		}
-		keys, ok := condMap["aws:TagKeys"]
-		if !ok {
-			continue
-		}
-		if arr, ok := keys.([]any); ok {
-			for _, k := range arr {
-				if str, ok := k.(string); ok && str == "attest:vetted" {
-					return true
+		for _, op := range []string{"ForAnyValue:StringEquals", "ForAnyValue:StringLike"} {
+			cond, ok := s.Condition[op]
+			if !ok {
+				continue
+			}
+			condMap, ok := cond.(map[string]any)
+			if !ok {
+				continue
+			}
+			keys, ok := condMap["aws:TagKeys"]
+			if !ok {
+				continue
+			}
+			if arr, ok := keys.([]any); ok {
+				for _, k := range arr {
+					if str, ok := k.(string); ok && str == key {
+						return true
+					}
 				}
 			}
 		}

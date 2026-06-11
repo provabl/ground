@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ## [Unreleased]
 
+### Changed
+
+- **AMI-vetting lockdown SCP now also protects the golden-PCR tags** (provabl#13): `policies/ami_vetting_lockdown_scp.json`
+  extends its `aws:TagKeys` condition (now `ForAnyValue:StringLike`) to cover `attest:pcr*` alongside
+  `attest:vetted`, so only the vetter can write the golden boot-measurement tags `vet ami-reference`
+  records. A forgeable golden PCR would defeat the runtime image binding. Adversarially verified against
+  the live IAM simulator (forging/stripping `attest:pcr0`/`attest:pcr7` → explicitDeny); see
+  `policies/SECURITY.md`.
+
 ### Added
 
 - **`ground preflight`** (provabl#16): verifies the calling principal holds the IAM actions `ground

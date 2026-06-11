@@ -14,7 +14,7 @@ trust boundary they reduce to.
 | Policy | Denies | Unless |
 |---|---|---|
 | `ami_launch_gating_scp.json` | `ec2:RunInstances` (on the image resource) | the AMI carries `ec2:ResourceTag/attest:vetted == "true"` |
-| `ami_vetting_lockdown_scp.json` | `ec2:CreateTags` / `ec2:DeleteTags` of the `attest:vetted` key (on images) | the caller is the designated **vetter** principal (`ArnNotLike aws:PrincipalArn`) |
+| `ami_vetting_lockdown_scp.json` | `ec2:CreateTags` / `ec2:DeleteTags` of the `attest:vetted` key **and the `attest:pcr*` golden-boot-measurement keys** (on images) | the caller is the designated **vetter** principal (`ArnNotLike aws:PrincipalArn`) |
 
 Together: only a **vetted** AMI may launch, and only the **vetter** may mark an AMI
 vetted. The vetter is `vet`'s CI principal (`vet gate ami-… --tag-vetted` writes the
@@ -46,8 +46,9 @@ Verified matrix (all passing):
 |---|---|
 | researcher `CreateTags attest:vetted` on an AMI | **explicitDeny** — self-marking blocked |
 | researcher `DeleteTags attest:vetted` on an AMI | **explicitDeny** — can't strip/rewrite |
-| **vetter** `CreateTags attest:vetted` | allowed — the vetter can mark |
-| researcher `CreateTags` of an unrelated key (`project`) | allowed — lockdown is scoped to the key |
+| researcher `CreateTags`/`DeleteTags` of a golden PCR (`attest:pcr0`, `attest:pcr7`) | **explicitDeny** — a forgeable golden PCR would defeat the runtime image binding |
+| **vetter** `CreateTags attest:vetted` / `attest:pcr0` | allowed — the vetter can mark + record golden PCRs |
+| researcher `CreateTags` of an unrelated key (`project`) | allowed — lockdown is scoped to the keys |
 | `RunInstances` of an AMI tagged `attest:vetted=true` | allowed |
 | `RunInstances` of an AMI tagged `attest:vetted=false` | **explicitDeny** |
 | `RunInstances` of an **untagged** AMI | **explicitDeny** — a missing tag is not "vetted" |

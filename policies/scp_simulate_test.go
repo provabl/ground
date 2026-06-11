@@ -107,7 +107,11 @@ func TestLockdownSCP_BlocksTagForgery(t *testing.T) {
 	}{
 		{"researcher forges attest:vetted (CreateTags)", "ec2:CreateTags", researcherID, []string{"attest:vetted"}, true},
 		{"researcher strips attest:vetted (DeleteTags)", "ec2:DeleteTags", researcherID, []string{"attest:vetted"}, true},
+		{"researcher forges golden PCR attest:pcr0", "ec2:CreateTags", researcherID, []string{"attest:pcr0"}, true},
+		{"researcher forges golden PCR attest:pcr7", "ec2:CreateTags", researcherID, []string{"attest:pcr7"}, true},
+		{"researcher strips a golden PCR (DeleteTags)", "ec2:DeleteTags", researcherID, []string{"attest:pcr0"}, true},
 		{"vetter sets attest:vetted (CreateTags)", "ec2:CreateTags", vetterARN, []string{"attest:vetted"}, false},
+		{"vetter sets a golden PCR attest:pcr0", "ec2:CreateTags", vetterARN, []string{"attest:pcr0"}, false},
 		{"researcher sets an unrelated tag (project)", "ec2:CreateTags", researcherID, []string{"project"}, false},
 	}
 	for _, tc := range cases {
