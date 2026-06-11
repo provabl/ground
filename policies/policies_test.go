@@ -253,6 +253,181 @@ func TestNitroAttestationSCPRequiresAttestedTag(t *testing.T) {
 	}
 }
 
+// TestAMILaunchGatingSCPDeniesUnvettedAMIs verifies the AMI-launch-gating SCP
+// denies ec2:RunInstances unless the AMI carries ec2:ResourceTag/attest:vetted ==
+// "true" — Layer 1 of the AMI-gating epic (provabl#13). Crucially, the Deny must be
+// scoped to the image resource ARN: a RunInstances call also creates instances,
+// volumes, and ENIs, none of which carry the AMI's tag, so a Resource:"*" scope
+// would evaluate the ResourceTag condition against those and deny every launch.
+func TestAMILaunchGatingSCPDeniesUnvettedAMIs(t *testing.T) {
+	p := loadPolicy(t, "ami_launch_gating_scp.json")
+
+	// Fail-closed: Deny only (an Allow would be a no-op).
+	if !p.AllDenyStatements() {
+		t.Error("ami_launch_gating_scp must use only Deny statements; an Allow would be a no-op")
+	}
+
+	if !statementDeniesAction(p, "ec2:RunInstances") {
+		t.Error("ami_launch_gating_scp does not deny ec2:RunInstances — the AMI launch gate is not active")
+	}
+
+	if !hasResourceTagVettedCondition(p) {
+		t.Error("ami_launch_gating_scp must deny on StringNotEquals ec2:ResourceTag/attest:vetted == \"true\"; " +
+			"without it, an un-vetted AMI can launch")
+	}
+
+	// The gating Deny must scope Resource to the image ARN, not "*".
+	if !deniesScopedToImageResource(p, "ec2:RunInstances") {
+		t.Error("ami_launch_gating_scp RunInstances Deny must scope Resource to the image ARN " +
+			"(arn:aws:ec2:*::image/*); a \"*\" scope evaluates ec2:ResourceTag against the instance/" +
+			"volumes/ENIs the call also creates and would deny every launch")
+	}
+}
+
+// TestAMIVettingLockdownDeniesTagMutation verifies the lockdown SCP denies mutating
+// the attest:vetted tag key on AMIs for everyone except the designated vetter
+// principal — the tamper-resistance behind the launch gate (a researcher must not
+// be able to self-mark an AMI vetted). Same "appraised, not asserted" principle as
+// qualify#32's locked attest:* tags.
+func TestAMIVettingLockdownDeniesTagMutation(t *testing.T) {
+	p := loadPolicy(t, "ami_vetting_lockdown_scp.json")
+
+	if !p.AllDenyStatements() {
+		t.Error("ami_vetting_lockdown_scp must use only Deny statements")
+	}
+
+	for _, action := range []string{"ec2:CreateTags", "ec2:DeleteTags"} {
+		if !statementDeniesAction(p, action) {
+			t.Errorf("ami_vetting_lockdown_scp does not deny %s — the attest:vetted tag could be self-set", action)
+		}
+	}
+
+	// The lockdown must (a) target the attest:vetted tag key and (b) carry a
+	// principal exception — without the key scope it denies all tagging; without
+	// the exception even the vetter can't mark an AMI (the gate would be unusable).
+	if !lockdownTargetsVettedKey(p) {
+		t.Error("ami_vetting_lockdown_scp must scope to aws:TagKeys [attest:vetted]; " +
+			"a broader scope denies all AMI tagging")
+	}
+	if !lockdownHasVetterArnException(p) {
+		t.Error("ami_vetting_lockdown_scp must carry an ArnNotLike aws:PrincipalArn exception for the vetter; " +
+			"without it, no principal (not even the vetter) can set attest:vetted")
+	}
+}
+
+// hasResourceTagVettedCondition returns true if p has a Deny statement whose
+// Condition is StringNotEquals on ec2:ResourceTag/attest:vetted = "true".
+func hasResourceTagVettedCondition(p *policy.Policy) bool {
+	const tagKey = "ec2:ResourceTag/attest:vetted"
+	for _, s := range p.Statements {
+		if s.Effect != "Deny" || s.Condition == nil {
+			continue
+		}
+		cond, ok := s.Condition["StringNotEquals"]
+		if !ok {
+			continue
+		}
+		condMap, ok := cond.(map[string]any)
+		if !ok {
+			continue
+		}
+		if val, found := condMap[tagKey]; found {
+			if str, ok := val.(string); ok && str == "true" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// deniesScopedToImageResource returns true if a Deny statement covering action
+// scopes its Resource to the EC2 image ARN (not "*").
+func deniesScopedToImageResource(p *policy.Policy, action string) bool {
+	const imageARN = "arn:aws:ec2:*::image/*"
+	resourceMatches := func(r any) bool {
+		switch v := r.(type) {
+		case string:
+			return v == imageARN
+		case []any:
+			for _, e := range v {
+				if str, ok := e.(string); ok && str == imageARN {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	actionCovers := func(a any) bool {
+		switch v := a.(type) {
+		case string:
+			return v == action
+		case []any:
+			for _, e := range v {
+				if str, ok := e.(string); ok && str == action {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, s := range p.Statements {
+		if s.Effect == "Deny" && actionCovers(s.Action) && resourceMatches(s.Resource) {
+			return true
+		}
+	}
+	return false
+}
+
+// lockdownTargetsVettedKey returns true if a Deny statement scopes to the
+// attest:vetted tag key via ForAnyValue:StringEquals aws:TagKeys.
+func lockdownTargetsVettedKey(p *policy.Policy) bool {
+	for _, s := range p.Statements {
+		if s.Effect != "Deny" || s.Condition == nil {
+			continue
+		}
+		cond, ok := s.Condition["ForAnyValue:StringEquals"]
+		if !ok {
+			continue
+		}
+		condMap, ok := cond.(map[string]any)
+		if !ok {
+			continue
+		}
+		keys, ok := condMap["aws:TagKeys"]
+		if !ok {
+			continue
+		}
+		if arr, ok := keys.([]any); ok {
+			for _, k := range arr {
+				if str, ok := k.(string); ok && str == "attest:vetted" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// lockdownHasVetterArnException returns true if a Deny statement carries an
+// ArnNotLike condition on aws:PrincipalArn (the vetter-principal carve-out).
+func lockdownHasVetterArnException(p *policy.Policy) bool {
+	for _, s := range p.Statements {
+		if s.Effect != "Deny" || s.Condition == nil {
+			continue
+		}
+		cond, ok := s.Condition["ArnNotLike"]
+		if !ok {
+			continue
+		}
+		if condMap, ok := cond.(map[string]any); ok {
+			if _, found := condMap["aws:PrincipalArn"]; found {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // hasNitroAttestationCondition returns true if p has a Deny statement whose
 // Condition is StringNotEquals on aws:PrincipalTag/attest:nitro-attested = "true"
 // (deny unless attested — covers both a missing and a non-"true" tag).

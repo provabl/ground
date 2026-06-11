@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyVettedTagMutationExceptVetter",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "arn:aws:ec2:*::image/*",
+      "Condition": {
+        "ForAnyValue:StringEquals": {
+          "aws:TagKeys": [
+            "attest:vetted"
+          ]
+        },
+        "ArnNotLike": {
+          "aws:PrincipalArn": "VETTER_PRINCIPAL_ARN_PLACEHOLDER"
+        }
+      }
+    }
+  ]
+}
