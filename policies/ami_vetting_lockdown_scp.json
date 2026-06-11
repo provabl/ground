@@ -10,9 +10,10 @@
       ],
       "Resource": "arn:aws:ec2:*::image/*",
       "Condition": {
-        "ForAnyValue:StringEquals": {
+        "ForAnyValue:StringLike": {
           "aws:TagKeys": [
-            "attest:vetted"
+            "attest:vetted",
+            "attest:pcr*"
           ]
         },
         "ArnNotLike": {
