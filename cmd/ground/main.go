@@ -419,6 +419,10 @@ type GroundMeta struct {
 	// ExternalServices records non-AWS services declared in ground.yaml.
 	// attest uses this to assess controls satisfied by those services.
 	ExternalServices []config.ExternalService `json:"external_services,omitempty"`
+	// DataEndpoints records external research-data endpoints declared for
+	// compute-to-data access (provabl/ground#10). attest reads these to know which
+	// in-place datasets the SRE may reach, alongside its dataset-scoped Cedar policy.
+	DataEndpoints []config.DataEndpoint `json:"data_endpoints,omitempty"`
 	// ProbeResults records verification results from ground-probe-* binaries.
 	// Keyed by service name. nil value = no probe configured for that service.
 	ProbeResults map[string]*probe.ProbeResult `json:"probe_results,omitempty"`
@@ -463,6 +467,7 @@ func runExportMetadata(region, configPath, outputPath string) error {
 	// Load config to capture external service declarations and run any configured probes.
 	if cfg, cfgErr := config.Load(configPath); cfgErr == nil {
 		meta.ExternalServices = cfg.Security.ExternalServices
+		meta.DataEndpoints = cfg.Network.DataEndpoints
 		// Run probes for services that have one configured.
 		if len(cfg.Security.ExternalServices) > 0 {
 			probeResults := probe.RunAll(ctx, cfg.Security.ExternalServices)
@@ -511,6 +516,7 @@ func runExportMetadata(region, configPath, outputPath string) error {
 	fmt.Printf("  CloudTrail:          %v\n", meta.CloudTrailEnabled)
 	fmt.Printf("  Config:              %v\n", meta.ConfigEnabled)
 	fmt.Printf("  External services:   %d declared\n", len(meta.ExternalServices))
+	fmt.Printf("  Data endpoints:      %d declared\n", len(meta.DataEndpoints))
 	for _, svc := range meta.ExternalServices {
 		if r, ok := meta.ProbeResults[svc.Name]; ok && r != nil {
 			if r.Error != "" {

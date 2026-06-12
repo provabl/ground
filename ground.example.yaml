@@ -24,6 +24,23 @@ network:
     - kms
     - logs
 
+  # External research-data endpoints reachable in-place (compute-to-data: the SRE
+  # gets network access to the dataset at its source; data never moves into the
+  # SRE). Declaring an endpoint lets ground render the egress-gating SCP
+  # (data_endpoint_access_scp — denies these actions unless the account carries an
+  # attest:data-classes posture tag) and export the endpoint in ground-meta for
+  # attest, whose dataset-scoped Cedar policy makes the fine per-DUA/per-dataset
+  # decision (provabl ADR 0002, ground#10). The VPC-routing half (the network
+  # stack) is a follow-up — this is the policy/metadata surface.
+  data_endpoints:
+    - name: ncbi-dbgap
+      vendor: NCBI dbGaP
+      url: s3.amazonaws.com
+      data_class: GENOMIC
+      sre_types: [nih-genomics]
+      authorized_ous: [SensitiveResearch/NIHGenomic]
+      notes: "Controlled-access genomic data. Per-DUA access enforced by attest's Cedar policy."
+
 identity:
   identity_center: true
 

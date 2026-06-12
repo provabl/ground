@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyComputeToDataEgressWithoutDataClassPosture",
+      "Effect": "Deny",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket",
+        "sagemaker:CreateTrainingJob",
+        "sagemaker:CreateProcessingJob"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:PrincipalTag/attest:data-classes": "true"
+        }
+      }
+    }
+  ]
+}
