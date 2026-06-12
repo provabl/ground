@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Added
 
+- **ADR 0001 — network foundation** (`docs/adr/0001-network-foundation.md`): design for the
+  `internal/stack/network` stub and the routing half of provabl/ground#10. Decides a hub-and-spoke
+  topology (shared-services hub holding centralized org-conditioned interface endpoints; per-tier spoke
+  VPCs; segregated Transit Gateway route tables making the `ground:tier`/`attest:data-classes` isolation
+  a *routing* fact), deterministic CIDR allocation from `NetworkConfig.CIDRBlock`, and a per-`DataEndpoint`
+  **compute-to-data egress** mechanism (S3 gateway endpoint for dbGaP, PrivateLink/peering for AnVIL/Terra,
+  never a public IGW for controlled data). Establishes ground's own `docs/adr/`. Status: Proposed;
+  4-step build order. Pairs with attest#100 + suite ADR 0002.
 - **Compute-to-data endpoint declarations + egress-gating SCP** (provabl/ground#10; provabl#11 Tier 2,
   ADR 0002 Decision 3). `NetworkConfig.data_endpoints` declares external research-data endpoints an SRE
   may reach in-place (NIH dbGaP S3, AnVIL/Terra) — name, url, required `data_class`, `sre_types`,
