@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Added
 
+- **Deterministic CIDR allocator** (`internal/stack/network/cidr.go`) — build step 1 of ADR 0001. A
+  pure function from the supernet (`NetworkConfig.CIDRBlock`) + the ordered tier list to a hub `/16`
+  (index 0) plus one `/16` per spoke tier, each split into per-AZ `/20` subnets. Allocation is a stable
+  function of `(supernet, tier index)` with no time or randomness, so re-running `ground deploy` never
+  renumbers an existing spoke (renumbering is destructive) — guarded by a test that appends a tier and
+  asserts existing spokes keep their blocks. Validates supernet size (must hold 1 hub + N spokes), AZ
+  count (1–16 `/20`s per `/16`), and rejects empty/duplicate tier names. No AWS calls; unit-tested like
+  the SCPs. (provabl/ground#10)
 - **ADR 0001 — network foundation** (`docs/adr/0001-network-foundation.md`): design for the
   `internal/stack/network` stub and the routing half of provabl/ground#10. Decides a hub-and-spoke
   topology (shared-services hub holding centralized org-conditioned interface endpoints; per-tier spoke
