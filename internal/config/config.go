@@ -21,18 +21,40 @@ type Config struct {
 }
 
 type OrgConfig struct {
-	Name          string   `yaml:"name"`
-	Region        string   `yaml:"region"`
-	ManagementID  string   `yaml:"management_account_id"`
-	AuditEmail    string   `yaml:"audit_email"`
-	LoggingEmail  string   `yaml:"logging_email"`
-	WorkloadOUs   []string `yaml:"workload_ous"`
+	Name         string   `yaml:"name"`
+	Region       string   `yaml:"region"`
+	ManagementID string   `yaml:"management_account_id"`
+	AuditEmail   string   `yaml:"audit_email"`
+	LoggingEmail string   `yaml:"logging_email"`
+	WorkloadOUs  []string `yaml:"workload_ous"`
 }
 
 type NetworkConfig struct {
-	TransitGateway bool   `yaml:"transit_gateway"`
-	CIDRBlock      string `yaml:"cidr_block"`
+	TransitGateway bool     `yaml:"transit_gateway"`
+	CIDRBlock      string   `yaml:"cidr_block"`
 	VPCEndpoints   []string `yaml:"vpc_endpoints"`
+	// DataEndpoints declares external research-data endpoints an SRE may reach
+	// in-place (compute-to-data: NIH dbGaP S3, AnVIL/Terra, …). Each is gated on
+	// compliance posture; see the compute-to-data design (provabl ADR 0002) and
+	// provabl/ground#10. Declaring them here lets ground (a) render the egress-
+	// gating SCP and (b) export them in ground-meta for attest. The VPC-routing
+	// half (the network stack) is a follow-up — these declarations are the
+	// policy/metadata surface, not the routing implementation.
+	DataEndpoints []DataEndpoint `yaml:"data_endpoints,omitempty"`
+}
+
+// DataEndpoint is an external research-data endpoint reachable under the
+// compute-to-data model. Access is gated coarsely by ground's SCP (on the
+// account's data-class posture) and finely by attest's dataset-scoped Cedar
+// policy (per-DUA, per-dataset). The two layers mirror AMI gating (provabl#13).
+type DataEndpoint struct {
+	Name          string   `yaml:"name"`                     // slug, e.g. "ncbi-dbgap"
+	Vendor        string   `yaml:"vendor,omitempty"`         // display name, e.g. "NCBI dbGaP"
+	URL           string   `yaml:"url"`                      // endpoint host/ARN the SRE routes to
+	DataClass     string   `yaml:"data_class"`               // required posture, e.g. "GENOMIC" — matched against attest:data-classes
+	SRETypes      []string `yaml:"sre_types,omitempty"`      // SRE types permitted to reach it, e.g. [nih-genomics]
+	AuthorizedOUs []string `yaml:"authorized_ous,omitempty"` // OU paths permitted, e.g. [SensitiveResearch/NIHGenomic]
+	Notes         string   `yaml:"notes,omitempty"`
 }
 
 type IdentityConfig struct {
@@ -63,12 +85,12 @@ type SecurityConfig struct {
 // Category options: edr, siem, cspm, cwpp, data-transfer, vuln-scanning, identity, research-platform
 // Feature options: fedramp-high, fedramp-moderate, baa, hipaa-compliant, high-assurance, soc2-type2, iso27001
 type ExternalService struct {
-	Name        string         `yaml:"name"`               // slug, e.g., "crowdstrike-falcon"
-	Vendor      string         `yaml:"vendor"`             // display name, e.g., "CrowdStrike"
-	Category    string         `yaml:"category"`           // edr, siem, cspm, data-transfer, ...
-	Features    []string       `yaml:"features,omitempty"` // fedramp-high, baa, high-assurance, ...
-	Scope       []string       `yaml:"scope,omitempty"`    // OU names; empty = org-wide
-	Notes       string         `yaml:"notes,omitempty"`    // free-text operator context
+	Name     string   `yaml:"name"`               // slug, e.g., "crowdstrike-falcon"
+	Vendor   string   `yaml:"vendor"`             // display name, e.g., "CrowdStrike"
+	Category string   `yaml:"category"`           // edr, siem, cspm, data-transfer, ...
+	Features []string `yaml:"features,omitempty"` // fedramp-high, baa, high-assurance, ...
+	Scope    []string `yaml:"scope,omitempty"`    // OU names; empty = org-wide
+	Notes    string   `yaml:"notes,omitempty"`    // free-text operator context
 	// Probe is the name or path of a ground-probe-* binary that verifies this service's
 	// declarations via its API. Optional — if absent, declarations are used as-is.
 	// The probe binary receives ProbeConfig as JSON on stdin and writes a ProbeResult to stdout.

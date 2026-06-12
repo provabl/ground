@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Added
 
+- **Compute-to-data endpoint declarations + egress-gating SCP** (provabl/ground#10; provabl#11 Tier 2,
+  ADR 0002 Decision 3). `NetworkConfig.data_endpoints` declares external research-data endpoints an SRE
+  may reach in-place (NIH dbGaP S3, AnVIL/Terra) — name, url, required `data_class`, `sre_types`,
+  `authorized_ous`. `policies/data_endpoint_access_scp.json` is the **coarse outer gate**: it denies the
+  in-place data-access actions (`s3:GetObject`/`ListBucket`, `sagemaker:Create{Training,Processing}Job`)
+  unless the principal carries an `attest:data-classes` posture tag (a `Null` check, so it never trips on
+  the multi-valued tag's contents). `ground export-metadata` now emits declared endpoints in
+  `ground-meta.json` for `attest init`. The **fine** per-DUA/per-dataset decision is attest's
+  dataset-scoped Cedar policy (attest#100) — same two-layer model as AMI gating (provabl#13). Tested by
+  `TestDataEndpointAccessSCPRequiresDataClassPosture` (Deny-only, posture condition present, egress
+  actions covered). **The VPC-routing half — `internal/stack/network` is still a stub — is a follow-up;
+  this is the policy + config + metadata surface, not the routing implementation.**
 - **`ground preflight`** (provabl#16): verifies the calling principal holds the IAM actions `ground
   deploy` needs (Organizations create/attach/describe, CloudFormation create/update/describe, the
   `CAPABILITY_NAMED_IAM` create actions) via read-only `iam:SimulatePrincipalPolicy` against the

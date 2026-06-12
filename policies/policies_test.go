@@ -461,6 +461,60 @@ func hasNitroAttestationCondition(p *policy.Policy) bool {
 	return false
 }
 
+// TestDataEndpointAccessSCPRequiresDataClassPosture verifies the compute-to-data
+// egress gate (provabl/ground#10; provabl ADR 0002). It must deny the in-place
+// data-access actions unless the principal carries the attest:data-classes posture
+// tag — the coarse outer gate. The fine, per-DUA/per-dataset decision is attest's
+// dataset-scoped Cedar policy (attest#100); this SCP only asks "may this account
+// class reach external research data at all?".
+func TestDataEndpointAccessSCPRequiresDataClassPosture(t *testing.T) {
+	p := loadPolicy(t, "data_endpoint_access_scp.json")
+
+	// Fail-closed: Deny only (an Allow would be a no-op SCP).
+	if !p.AllDenyStatements() {
+		t.Error("data_endpoint_access_scp must use only Deny statements; an Allow would be a no-op")
+	}
+
+	// The gating condition: deny when the data-class posture tag is absent.
+	if !hasPrincipalTagNullCondition(p, "attest:data-classes") {
+		t.Error("data_endpoint_access_scp must deny on Null aws:PrincipalTag/attest:data-classes == \"true\"; " +
+			"without it, a principal lacking any data-class posture can reach external research data")
+	}
+
+	// The compute-to-data egress actions must be covered.
+	for _, action := range []string{"s3:GetObject", "sagemaker:CreateTrainingJob"} {
+		if !statementDeniesAction(p, action) {
+			t.Errorf("data_endpoint_access_scp does not deny %s — un-postured egress path open", action)
+		}
+	}
+}
+
+// hasPrincipalTagNullCondition returns true if p has a Deny statement whose
+// Condition is a Null check on aws:PrincipalTag/<tag> == "true" (deny unless the
+// principal carries the tag).
+func hasPrincipalTagNullCondition(p *policy.Policy, tag string) bool {
+	tagKey := "aws:PrincipalTag/" + tag
+	for _, s := range p.Statements {
+		if s.Effect != "Deny" || s.Condition == nil {
+			continue
+		}
+		nullCond, ok := s.Condition["Null"]
+		if !ok {
+			continue
+		}
+		condMap, ok := nullCond.(map[string]any)
+		if !ok {
+			continue
+		}
+		if val, found := condMap[tagKey]; found {
+			if str, ok := val.(string); ok && str == "true" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // hasSeparateDenyForTag returns true if p has a Deny statement whose
 // Condition references only the given tag in a Null check.
 func hasSeparateDenyForTag(p *policy.Policy, tag string) bool {
