@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Added
 
+- **Network foundation: single-VPC stack** (`internal/stack/network/network.go`) — build step 2 of
+  ADR 0001 (the `TransitGateway:false` degrade path). `network.Stack.Template()` emits a private-only
+  VPC (no Internet Gateway) on the deterministic hub `/16`, one private `/20` subnet per AZ (3 by
+  default, region-portable via `Fn::GetAZs`), **gateway** VPC endpoints for S3/DynamoDB (route-table
+  entries, no hourly cost), and **interface** endpoints for the remaining `NetworkConfig.VPCEndpoints`,
+  each carrying an org-conditioned policy (allow same-org `aws:PrincipalOrgID` against a deploy-time
+  `OrgId` parameter, deny external — mirrors `policies/vpc_endpoint_policy.json`; OrgId is resolved the
+  same way the accounts stack resolves OrgRootId). Built as a `cfn.Template` (Go maps → JSON →
+  CloudFormation SDK) like the other four stacks — **native CloudFormation is ground's deploy path; CDK
+  remains an optional `--output cdk` export only.** Surfaced in `ground deploy --dry-run`. Template-as-
+  data unit tests (VPC CIDR, private subnets, no-IGW, gateway-vs-interface split, org-scoped policy,
+  determinism, defaults, outputs). The live-deploy numbered-phase wiring and the hub-and-spoke + Transit
+  Gateway expansion (step 3) are follow-ups. (provabl/ground#10)
 - **Deterministic CIDR allocator** (`internal/stack/network/cidr.go`) — build step 1 of ADR 0001. A
   pure function from the supernet (`NetworkConfig.CIDRBlock`) + the ordered tier list to a hub `/16`
   (index 0) plus one `/16` per spoke tier, each split into per-AZ `/20` subnets. Allocation is a stable
