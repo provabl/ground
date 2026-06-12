@@ -22,6 +22,7 @@ import (
 	"github.com/provabl/ground/internal/stack/accounts"
 	"github.com/provabl/ground/internal/stack/identity"
 	"github.com/provabl/ground/internal/stack/logging"
+	"github.com/provabl/ground/internal/stack/network"
 	"github.com/provabl/ground/internal/stack/security"
 )
 
@@ -194,6 +195,15 @@ func runDeploy(configPath, region string, dryRun bool) error {
 	accountsTmpl, _ := accountsStack.Template()
 	identityTmpl, _ := identityStack.Template()
 
+	// Network foundation (single VPC; ADR 0001 step 2). Generated for dry-run
+	// visibility. Live deploy wiring (a 5th numbered phase) is a follow-up; the
+	// hub-and-spoke + Transit Gateway expansion is ADR 0001 step 3.
+	netStack := network.New(&cfg.Network, &cfg.Org)
+	netTmpl, err := netStack.Template()
+	if err != nil {
+		return fmt.Errorf("generate network template: %w", err)
+	}
+
 	// Inject OrgRootId parameter into accounts template.
 	// This avoids a Lambda custom resource — ground discovers it via Organizations API.
 	if accountsTmpl != nil && accountsTmpl.Parameters != nil {
@@ -221,11 +231,13 @@ func runDeploy(configPath, region string, dryRun bool) error {
 		secJSON, _ := secTmpl.JSON()
 		accountsJSON, _ := accountsTmpl.JSON()
 		identityJSON, _ := identityTmpl.JSON()
+		netJSON, _ := netTmpl.JSON()
 
 		fmt.Printf("Stack: %s\n%s\n\n", logStack.StackName(), logJSON)
 		fmt.Printf("Stack: %s\n%s\n\n", secStack.StackName(), secJSON)
 		fmt.Printf("Stack: %s\n%s\n\n", accountsStack.StackName(), accountsJSON)
 		fmt.Printf("Stack: %s\n%s\n\n", identityStack.StackName(), identityJSON)
+		fmt.Printf("Stack: %s\n%s\n\n", netStack.StackName(), netJSON)
 		fmt.Println("Run without --dry-run to deploy these stacks to CloudFormation.")
 		return nil
 	}
