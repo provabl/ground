@@ -14,6 +14,7 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
+	"github.com/provabl/ground/internal/cfn"
 	"github.com/provabl/ground/internal/config"
 	"github.com/provabl/ground/internal/deploy"
 	"github.com/provabl/ground/internal/iac"
@@ -195,13 +196,27 @@ func runDeploy(configPath, region string, dryRun bool) error {
 	accountsTmpl, _ := accountsStack.Template()
 	identityTmpl, _ := identityStack.Template()
 
-	// Network foundation (single VPC; ADR 0001 step 2). Generated for dry-run
-	// visibility. Live deploy wiring (a 5th numbered phase) is a follow-up; the
-	// hub-and-spoke + Transit Gateway expansion is ADR 0001 step 3.
+	// Network foundation (ADR 0001). Single-VPC or hub-and-spoke per config.
 	netStack := network.New(&cfg.Network, &cfg.Org)
 	netTmpl, err := netStack.Template()
 	if err != nil {
 		return fmt.Errorf("generate network template: %w", err)
+	}
+	// Inject the OrgId parameter (org-conditioned endpoint policy) the same way the
+	// accounts stack gets OrgRootId — discovered via the Organizations API.
+	if netTmpl.Parameters != nil {
+		if _, hasOrgID := netTmpl.Parameters["OrgId"]; hasOrgID {
+			orgID, orgErr := fetchOrgID(context.Background(), cfg.Org.Region)
+			if orgErr != nil {
+				fmt.Printf("  ⚠ Could not auto-discover org ID: %v\n", orgErr)
+				fmt.Println("  Retrieve manually: aws organizations describe-organization --query 'Organization.Id' --output text")
+			} else if orgID != "" {
+				if p, ok := netTmpl.Parameters["OrgId"].(map[string]any); ok {
+					p["Default"] = orgID
+				}
+				fmt.Printf("  Org ID: %s\n", orgID)
+			}
+		}
 	}
 
 	// Inject OrgRootId parameter into accounts template.
@@ -250,47 +265,29 @@ func runDeploy(configPath, region string, dryRun bool) error {
 
 	fmt.Printf("Deploying foundation for: %s (region: %s)\n\n", cfg.Org.Name, cfg.Org.Region)
 
-	// Phase 1a: logging foundation.
-	fmt.Printf("  [1/2] %s ... ", logStack.StackName())
-	logJSON, _ := logTmpl.JSON()
-	logResult, err := deployer.Deploy(ctx, logStack.StackName(), logJSON)
-	if err != nil {
-		return fmt.Errorf("deploy %s: %w", logStack.StackName(), err)
-	}
-	action := "updated"
-	if logResult.Created {
-		action = "created"
-	}
-	fmt.Printf("%s (%s)\n", action, logResult.Status)
-
-	// Phase 1b: security baseline.
-	fmt.Printf("  [2/2] %s ... ", secStack.StackName())
-	secJSON, _ := secTmpl.JSON()
-	secResult, err := deployer.Deploy(ctx, secStack.StackName(), secJSON)
-	if err != nil {
-		return fmt.Errorf("deploy %s: %w", secStack.StackName(), err)
-	}
-	action = "updated"
-	if secResult.Created {
-		action = "created"
-	}
-	fmt.Printf("%s (%s)\n", action, secResult.Status)
-
-	fmt.Println("\nPhase 1 complete.")
-
-	// Phase 2: accounts + identity stacks (templates already generated for dry-run above).
-	for _, entry := range []struct {
+	// One ordered deploy sequence with consistent [i/N] numbering. Order matters:
+	// logging + security plumbing first, then the org structure (accounts/identity),
+	// then the network foundation that rides on the org (its endpoint policy needs
+	// the OrgId discovered above).
+	stacks := []struct {
 		name string
-		json string
+		tmpl *cfn.Template
 	}{
-		{accountsStack.StackName(), func() string { j, _ := accountsTmpl.JSON(); return j }()},
-		{identityStack.StackName(), func() string { j, _ := identityTmpl.JSON(); return j }()},
-	} {
-		idx := map[string]string{accountsStack.StackName(): "3", identityStack.StackName(): "4"}[entry.name]
-		fmt.Printf("  [%s/4] %s ... ", idx, entry.name)
-		result, deployErr := deployer.Deploy(ctx, entry.name, entry.json)
+		{logStack.StackName(), logTmpl},
+		{secStack.StackName(), secTmpl},
+		{accountsStack.StackName(), accountsTmpl},
+		{identityStack.StackName(), identityTmpl},
+		{netStack.StackName(), netTmpl},
+	}
+	for i, st := range stacks {
+		fmt.Printf("  [%d/%d] %s ... ", i+1, len(stacks), st.name)
+		body, jsonErr := st.tmpl.JSON()
+		if jsonErr != nil {
+			return fmt.Errorf("serialize %s template: %w", st.name, jsonErr)
+		}
+		result, deployErr := deployer.Deploy(ctx, st.name, body)
 		if deployErr != nil {
-			return fmt.Errorf("deploy %s: %w", entry.name, deployErr)
+			return fmt.Errorf("deploy %s: %w", st.name, deployErr)
 		}
 		verb := "updated"
 		if result.Created {
@@ -371,6 +368,23 @@ func fetchOrgRootID(ctx context.Context, region string) (string, error) {
 		return "", fmt.Errorf("root ID is nil")
 	}
 	return *out.Roots[0].Id, nil
+}
+
+// fetchOrgID returns the AWS Organization ID (o-xxxx), used to fill the network
+// stack's OrgId parameter the same way fetchOrgRootID fills OrgRootId.
+func fetchOrgID(ctx context.Context, region string) (string, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	if err != nil {
+		return "", fmt.Errorf("load AWS config: %w", err)
+	}
+	out, err := organizations.NewFromConfig(cfg).DescribeOrganization(ctx, &organizations.DescribeOrganizationInput{})
+	if err != nil {
+		return "", fmt.Errorf("describe organization: %w", err)
+	}
+	if out.Organization == nil || out.Organization.Id == nil {
+		return "", fmt.Errorf("organization ID is nil")
+	}
+	return *out.Organization.Id, nil
 }
 
 func runGenerateIaC(configPath, format string) error {

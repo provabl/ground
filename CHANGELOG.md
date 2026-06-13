@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
   the live IAM simulator (forging/stripping `attest:pcr0`/`attest:pcr7` → explicitDeny); see
   `policies/SECURITY.md`.
 
+### Changed
+
+- **`ground deploy` wires in the network stack as a real deploy phase** and unifies the deploy
+  sequence. Previously the network foundation was `--dry-run`-visible only, and the live deploy
+  hardcoded brittle phase numbering (`[1/2]` then `[3/4]`/`[4/4]` split across an ad-hoc block and a
+  loop). Now all five stacks (logging → security → accounts → identity → network) deploy through one
+  ordered loop with consistent `[i/5]` numbering. The network stack's `OrgId` parameter (for its
+  org-conditioned endpoint policy) is auto-filled via `organizations:DescribeOrganization`, the same
+  way the accounts stack fills `OrgRootId` — so the org-conditioned VPC endpoints deploy without a
+  manual parameter. Closes the deploy-wiring follow-up left by ADR 0001 steps 2–4.
+
 ### Added
 
 - **Compute-to-data egress per `DataEndpoint`** (`internal/stack/network/network.go`) — build step 4 of
