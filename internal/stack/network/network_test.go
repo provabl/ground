@@ -316,3 +316,104 @@ func TestHubSpoke_DegradesWithoutTiers(t *testing.T) {
 		t.Errorf("got %d VPCs, want 1 (single-VPC degrade)", len(res["AWS::EC2::VPC"]))
 	}
 }
+
+func TestClassifyEndpoint(t *testing.T) {
+	cases := map[string]egressMechanism{
+		"s3.amazonaws.com":                           egressS3Gateway,
+		"s3.us-west-2.amazonaws.com":                 egressS3Gateway,
+		"my-dbgap-bucket.s3.us-west-2.amazonaws.com": egressS3Gateway,
+		"com.amazonaws.vpce.us-west-2.vpce-svc-123":  egressInterface,
+		"dtn.ncbi.nlm.nih.gov":                       egressUnreachable,
+		"storage.googleapis.com":                     egressUnreachable,
+	}
+	for url, want := range cases {
+		if got := classifyEndpoint(url); got != want {
+			t.Errorf("classifyEndpoint(%q) = %d, want %d", url, got, want)
+		}
+	}
+}
+
+// dataEndpointStack is a hub-spoke stack with one S3-backed, one PrivateLink, and
+// one public (unreachable) data endpoint. "s3" is NOT in VPCEndpoints, so the
+// S3-backed dataset must create its own gateway endpoint.
+func dataEndpointStack() *Stack {
+	return New(
+		&config.NetworkConfig{
+			CIDRBlock:      "10.0.0.0/8",
+			TransitGateway: true,
+			VPCEndpoints:   []string{"sts", "ssm"}, // no s3 here on purpose
+			DataEndpoints: []config.DataEndpoint{
+				{Name: "ncbi-dbgap", URL: "s3.us-west-2.amazonaws.com", DataClass: "GENOMIC"},
+				{Name: "anvil-terra", URL: "com.amazonaws.vpce.us-west-2.vpce-svc-abc", DataClass: "GENOMIC"},
+				{Name: "public-portal", URL: "dtn.ncbi.nlm.nih.gov", DataClass: "GENOMIC"},
+			},
+		},
+		&config.OrgConfig{Region: "us-west-2", ManagementID: "123456789012", WorkloadOUs: []string{"research"}},
+	)
+}
+
+func TestDataEgress_S3BackedCreatesGatewayEndpoint(t *testing.T) {
+	tmpl, err := dataEndpointStack().Template()
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	ep, ok := tmpl.Resources["DataEgressncbidbgap"].(map[string]any)
+	if !ok {
+		t.Fatal("missing DataEgressncbidbgap endpoint (S3-backed dataset should create a gateway endpoint when no foundation S3 endpoint exists)")
+	}
+	props := ep["Properties"].(map[string]any)
+	if props["VpcEndpointType"] != "Gateway" {
+		t.Errorf("S3 data endpoint type = %v, want Gateway", props["VpcEndpointType"])
+	}
+}
+
+func TestDataEgress_PrivateLinkInterface(t *testing.T) {
+	tmpl, _ := dataEndpointStack().Template()
+	ep, ok := tmpl.Resources["DataEgressanvilterra"].(map[string]any)
+	if !ok {
+		t.Fatal("missing DataEgressanvilterra interface endpoint")
+	}
+	props := ep["Properties"].(map[string]any)
+	if props["VpcEndpointType"] != "Interface" {
+		t.Errorf("PrivateLink endpoint type = %v, want Interface", props["VpcEndpointType"])
+	}
+	if props["ServiceName"] != "com.amazonaws.vpce.us-west-2.vpce-svc-abc" {
+		t.Errorf("ServiceName = %v, want the declared PrivateLink service name", props["ServiceName"])
+	}
+}
+
+// A public host must NOT produce a route resource — only a no-route output.
+func TestDataEgress_PublicHostGetsNoRoute(t *testing.T) {
+	tmpl, _ := dataEndpointStack().Template()
+	if _, exists := tmpl.Resources["DataEgresspublicportal"]; exists {
+		t.Error("public host must not produce an egress endpoint resource (no public IGW for controlled data)")
+	}
+	out, ok := tmpl.Outputs["DataEgresspublicportal"].(map[string]any)
+	if !ok {
+		t.Fatal("expected a no-route output for the public endpoint")
+	}
+	if out["Value"] != "no-route" {
+		t.Errorf("public endpoint output value = %v, want no-route", out["Value"])
+	}
+}
+
+// When the foundation already creates an S3 gateway endpoint (s3 in VPCEndpoints),
+// an S3-backed dataset must reuse it, not add a conflicting second one.
+func TestDataEgress_ReusesFoundationS3Endpoint(t *testing.T) {
+	s := New(
+		&config.NetworkConfig{
+			CIDRBlock:      "10.0.0.0/8",
+			TransitGateway: true,
+			VPCEndpoints:   []string{"s3"}, // foundation S3 gateway endpoint exists
+			DataEndpoints:  []config.DataEndpoint{{Name: "ncbi-dbgap", URL: "s3.us-west-2.amazonaws.com"}},
+		},
+		&config.OrgConfig{Region: "us-west-2", WorkloadOUs: []string{"research"}},
+	)
+	tmpl, _ := s.Template()
+	if _, exists := tmpl.Resources["DataEgressncbidbgap"]; exists {
+		t.Error("S3 dataset must reuse the foundation S3 gateway endpoint, not create a second (a route table allows only one S3 gateway endpoint)")
+	}
+	if _, ok := tmpl.Outputs["DataEgressncbidbgap"]; !ok {
+		t.Error("expected an output recording the dataset is reached via the hub S3 gateway endpoint")
+	}
+}

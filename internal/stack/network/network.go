@@ -282,6 +282,13 @@ func (s *Stack) hubSpokeTemplate(supernet string, tiers []string) (*cfn.Template
 		}
 	}
 
+	// Compute-to-data egress (ADR 0001 step 4, provabl/ground#10). For each declared
+	// DataEndpoint, render a hub-side scoped egress path (spokes reach it via the
+	// TGW). The mechanism is inferred from the endpoint URL; a public host that
+	// can't be reached on the AWS backbone gets NO route — never a public IGW for
+	// controlled data (the declaration still ships in ground-meta with a warning).
+	s.addDataEndpointEgress(resources, outputs, hubIDs)
+
 	return &cfn.Template{
 		AWSTemplateFormatVersion: "2010-09-09",
 		Description:              "ground: network foundation (hub-and-spoke) — Transit Gateway with segregated per-tier route tables",
@@ -295,6 +302,112 @@ func (s *Stack) hubSpokeTemplate(supernet string, tiers []string) (*cfn.Template
 		Resources: resources,
 		Outputs:   outputs,
 	}, nil
+}
+
+// egressMechanism is how a DataEndpoint is reached over the AWS backbone.
+type egressMechanism int
+
+const (
+	egressS3Gateway   egressMechanism = iota // S3-host → S3 gateway endpoint
+	egressInterface                          // com.amazonaws.* PrivateLink → interface endpoint
+	egressUnreachable                        // public host with no backbone path → no route
+)
+
+// classifyEndpoint infers the egress mechanism from a DataEndpoint URL. dbGaP
+// lives in S3 (url: s3.amazonaws.com / *.s3.*.amazonaws.com); AnVIL/Terra and
+// similar expose a com.amazonaws.* PrivateLink service name. Anything else is an
+// ordinary public host we refuse to route controlled data to.
+func classifyEndpoint(url string) egressMechanism {
+	u := strings.ToLower(strings.TrimSpace(url))
+	switch {
+	case strings.HasPrefix(u, "com.amazonaws."):
+		return egressInterface
+	case strings.HasPrefix(u, "s3.") || strings.Contains(u, ".s3."):
+		// s3.amazonaws.com, s3.<region>.amazonaws.com, <bucket>.s3.<region>...
+		return egressS3Gateway
+	default:
+		return egressUnreachable
+	}
+}
+
+// addDataEndpointEgress renders the hub-side egress path for each declared
+// DataEndpoint. S3-backed endpoints reuse a single S3 gateway endpoint on the hub
+// route table (a route table allows only one); PrivateLink endpoints get an
+// interface endpoint. Unreachable (public) endpoints get no route — the
+// declaration still ships in ground-meta (with the warning ground emits there).
+func (s *Stack) addDataEndpointEgress(resources, outputs map[string]any, hub vpcLogicalIDs) {
+	// An S3 gateway endpoint may already exist on the hub route table (if "s3" is in
+	// VPCEndpoints). Detect it so we don't add a conflicting second one.
+	s3GatewayExists := false
+	for _, svc := range s.cfg.VPCEndpoints {
+		if svc == "s3" {
+			s3GatewayExists = true
+			break
+		}
+	}
+
+	for _, ep := range s.cfg.DataEndpoints {
+		if ep.Name == "" {
+			continue
+		}
+		lid := "DataEgress" + sanitizeLogical(ep.Name)
+		switch classifyEndpoint(ep.URL) {
+		case egressS3Gateway:
+			if s3GatewayExists {
+				// The hub's foundation S3 gateway endpoint already provides the path;
+				// the dataset is reached through it. Record the binding as an output
+				// rather than a duplicate endpoint.
+				outputs[lid] = map[string]any{
+					"Description": fmt.Sprintf("compute-to-data %q (S3): reached via the hub S3 gateway endpoint", ep.Name),
+					"Value":       ep.URL,
+				}
+				continue
+			}
+			resources[lid] = cfn.Resource("AWS::EC2::VPCEndpoint", map[string]any{
+				"VpcId":           ref(hub.vpc),
+				"ServiceName":     serviceName("s3", s.org.Region),
+				"VpcEndpointType": "Gateway",
+				"RouteTableIds":   []any{ref(hub.routeTable)},
+			})
+			s3GatewayExists = true // subsequent S3 datasets reuse it
+		case egressInterface:
+			resources[lid] = cfn.Resource("AWS::EC2::VPCEndpoint", map[string]any{
+				"VpcId":             ref(hub.vpc),
+				"ServiceName":       ep.URL, // a com.amazonaws.* PrivateLink service name
+				"VpcEndpointType":   "Interface",
+				"PrivateDnsEnabled": false, // partner PrivateLink — no private DNS override
+				"SubnetIds":         hubSubnetRefs(hub),
+				"PolicyDocument":    orgEndpointPolicy(),
+			})
+		case egressUnreachable:
+			// No route. ground-meta still carries the declaration (with a warning);
+			// surfacing it as an output makes the no-route decision visible in the
+			// template too.
+			outputs[lid] = map[string]any{
+				"Description": fmt.Sprintf("compute-to-data %q (%s): NO backbone route — public host; declared in ground-meta only", ep.Name, ep.URL),
+				"Value":       "no-route",
+			}
+		}
+	}
+}
+
+func hubSubnetRefs(hub vpcLogicalIDs) []any {
+	out := make([]any, 0, len(hub.subnets))
+	for _, sid := range hub.subnets {
+		out = append(out, ref(sid))
+	}
+	return out
+}
+
+// sanitizeLogical strips a slug to CloudFormation-safe logical-ID characters.
+func sanitizeLogical(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // vpcLogicalIDs holds the logical IDs of a VPC block's key resources, so the TGW

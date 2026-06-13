@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Added
 
+- **Compute-to-data egress per `DataEndpoint`** (`internal/stack/network/network.go`) — build step 4 of
+  ADR 0001, the routing half of provabl/ground#10 (and its final piece). For each declared
+  `network.data_endpoints` entry, the hub-and-spoke template now renders a hub-side scoped egress path
+  whose mechanism is inferred from the endpoint URL: an **S3 host** (dbGaP) → an S3 **gateway endpoint**
+  on the hub route table (reusing the foundation S3 endpoint when one already exists — a route table
+  permits only one); a **`com.amazonaws.*` PrivateLink** service (AnVIL/Terra) → an **interface
+  endpoint**; **any other (public) host → no route at all**, only a `ground-meta`/output declaration
+  with a warning — ground refuses to route controlled data over a public IGW. This is the network gate
+  that joins the SCP (`data_endpoint_access_scp`) and attest's dataset-scoped Cedar policy (attest#100):
+  who-may-call, who-may-read-which-dataset, and now is-there-a-scoped-backbone-path. Unit-tested
+  (classifier + all three render paths + the S3-reuse dedup); verified via `--dry-run`. **Completes the
+  compute-to-data chain end to end** (provabl ADR 0002 + ground ADR 0001).
 - **Network foundation: hub-and-spoke + Transit Gateway** (`internal/stack/network/network.go`) — build
   step 3 of ADR 0001. When `network.transit_gateway` is set and `org.workload_ous` lists tiers,
   `Template()` now builds a shared **hub** VPC (holding the centralized gateway + org-conditioned
