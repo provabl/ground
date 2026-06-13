@@ -188,3 +188,131 @@ func TestTemplate_Outputs(t *testing.T) {
 		}
 	}
 }
+
+// hubSpokeStack returns a TransitGateway:true stack with three workload tiers.
+func hubSpokeStack() *Stack {
+	return New(
+		&config.NetworkConfig{
+			CIDRBlock:      "10.0.0.0/8",
+			TransitGateway: true,
+			VPCEndpoints:   []string{"s3", "sts", "ssm"},
+		},
+		&config.OrgConfig{
+			Region:       "us-west-2",
+			ManagementID: "123456789012",
+			WorkloadOUs:  []string{"research", "sensitive", "sandbox"},
+		},
+	)
+}
+
+func TestHubSpoke_TopologyShape(t *testing.T) {
+	res := resourcesByType(t, hubSpokeStack())
+
+	if n := len(res["AWS::EC2::TransitGateway"]); n != 1 {
+		t.Fatalf("got %d transit gateways, want 1", n)
+	}
+	// 1 hub + 3 spokes = 4 VPCs.
+	if n := len(res["AWS::EC2::VPC"]); n != 4 {
+		t.Errorf("got %d VPCs, want 4 (hub + 3 spokes)", n)
+	}
+	// 4 TGW attachments (one per VPC).
+	if n := len(res["AWS::EC2::TransitGatewayAttachment"]); n != 4 {
+		t.Errorf("got %d TGW attachments, want 4", n)
+	}
+	// 4 segregated TGW route tables (hub + per spoke).
+	if n := len(res["AWS::EC2::TransitGatewayRouteTable"]); n != 4 {
+		t.Errorf("got %d TGW route tables, want 4 (segregated per tier)", n)
+	}
+	// No Internet Gateway anywhere.
+	if n := len(res["AWS::EC2::InternetGateway"]); n != 0 {
+		t.Errorf("got %d internet gateways, want 0 (private-only)", n)
+	}
+}
+
+func TestHubSpoke_DisablesDefaultTGWTables(t *testing.T) {
+	res := resourcesByType(t, hubSpokeStack())
+	tgw := res["AWS::EC2::TransitGateway"][0]
+	if tgw["DefaultRouteTableAssociation"] != "disable" {
+		t.Error("TGW must disable default route-table association (else a new attachment auto-joins a shared table, breaking tier isolation)")
+	}
+	if tgw["DefaultRouteTablePropagation"] != "disable" {
+		t.Error("TGW must disable default route-table propagation")
+	}
+}
+
+// The isolation invariant: a spoke's TGW route table has a route to the hub but
+// NEVER to a sibling spoke. This is the routing fact behind tier isolation.
+func TestHubSpoke_NoCrossSpokeRoutes(t *testing.T) {
+	tmpl, err := hubSpokeStack().Template()
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+
+	// Spoke CIDRs (10.2/16 research?, order is sorted: research, sandbox, sensitive
+	// → 10.1, 10.2, 10.3). Collect every TransitGatewayRoute and check no spoke
+	// route table points at another spoke's CIDR.
+	spokeCIDRs := map[string]bool{"10.1.0.0/16": true, "10.2.0.0/16": true, "10.3.0.0/16": true}
+
+	for logicalID, raw := range tmpl.Resources {
+		r := raw.(map[string]any)
+		if r["Type"] != "AWS::EC2::TransitGatewayRoute" {
+			continue
+		}
+		props := r["Properties"].(map[string]any)
+		rtRef := props["TransitGatewayRouteTableId"].(map[string]string)["Ref"]
+		dest := props["DestinationCidrBlock"].(string)
+
+		// A route living in a spoke route table (TGWRouteTableSpoke*) must target the
+		// hub CIDR (10.0.0.0/16), never a sibling spoke CIDR.
+		if strings.HasPrefix(rtRef, "TGWRouteTableSpoke") {
+			if spokeCIDRs[dest] {
+				t.Errorf("%s: spoke route table %s has a route to spoke CIDR %s — cross-tier path must not exist",
+					logicalID, rtRef, dest)
+			}
+			if dest != "10.0.0.0/16" {
+				t.Errorf("%s: spoke route %s points at %s, expected only the hub CIDR 10.0.0.0/16", logicalID, rtRef, dest)
+			}
+		}
+	}
+}
+
+// Endpoints live only on the hub (shared via TGW); spokes carry none.
+func TestHubSpoke_EndpointsOnlyOnHub(t *testing.T) {
+	tmpl, err := hubSpokeStack().Template()
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	for logicalID, raw := range tmpl.Resources {
+		if raw.(map[string]any)["Type"] != "AWS::EC2::VPCEndpoint" {
+			continue
+		}
+		if !strings.HasPrefix(logicalID, "Hub") {
+			t.Errorf("VPC endpoint %s is not on the hub — endpoints are centralized on the hub and shared via TGW", logicalID)
+		}
+	}
+}
+
+func TestHubSpoke_Deterministic(t *testing.T) {
+	a, _ := hubSpokeStack().Template()
+	b, _ := hubSpokeStack().Template()
+	aj, _ := a.JSON()
+	bj, _ := b.JSON()
+	if aj != bj {
+		t.Error("hub-and-spoke template is not deterministic")
+	}
+}
+
+// TransitGateway:true but no workload tiers → degrade to the single-VPC path.
+func TestHubSpoke_DegradesWithoutTiers(t *testing.T) {
+	s := New(
+		&config.NetworkConfig{CIDRBlock: "10.0.0.0/8", TransitGateway: true},
+		&config.OrgConfig{Region: "us-east-1"}, // no WorkloadOUs
+	)
+	res := resourcesByType(t, s)
+	if len(res["AWS::EC2::TransitGateway"]) != 0 {
+		t.Error("no workload tiers → should degrade to single VPC (no TGW)")
+	}
+	if len(res["AWS::EC2::VPC"]) != 1 {
+		t.Errorf("got %d VPCs, want 1 (single-VPC degrade)", len(res["AWS::EC2::VPC"]))
+	}
+}

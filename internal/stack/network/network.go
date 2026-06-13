@@ -48,16 +48,34 @@ func New(cfg *config.NetworkConfig, org *config.OrgConfig) *Stack {
 // StackName returns the CloudFormation stack name.
 func (s *Stack) StackName() string { return "ground-network" }
 
-// Template generates the single-VPC network foundation. The VPC CIDR is the hub
-// /16 of the deterministic allocation (ADR 0001 step 1) carved from
-// NetworkConfig.CIDRBlock; private subnets are its per-AZ /20s.
+// Template generates the network foundation. When NetworkConfig.TransitGateway is
+// set and there are workload tiers to spoke out, it builds the hub-and-spoke
+// topology (ADR 0001 step 3); otherwise it builds the single self-contained VPC
+// (step 2, the degrade path). Both carve CIDRs from the deterministic allocation
+// (step 1) over NetworkConfig.CIDRBlock.
 func (s *Stack) Template() (*cfn.Template, error) {
 	supernet := s.cfg.CIDRBlock
 	if supernet == "" {
 		supernet = "10.0.0.0/8"
 	}
-	// Step 2 deploys a single self-contained VPC (no spokes); it occupies the hub
-	// /16. The hub-and-spoke fan-out is step 3.
+	tiers := spokeTiers(s.org.WorkloadOUs)
+	if s.cfg.TransitGateway && len(tiers) > 0 {
+		return s.hubSpokeTemplate(supernet, tiers)
+	}
+	return s.singleVPCTemplate(supernet)
+}
+
+// spokeTiers normalizes the workload OU list into spoke tier names, dropping
+// empties and de-duping (the allocator rejects either, but normalizing here keeps
+// the topology decision in one place).
+func spokeTiers(workloadOUs []string) []string {
+	return sortedUnique(workloadOUs)
+}
+
+// singleVPCTemplate is the TransitGateway:false degrade path (ADR 0001 step 2): a
+// single private VPC on the hub /16 with gateway + org-conditioned interface
+// endpoints.
+func (s *Stack) singleVPCTemplate(supernet string) (*cfn.Template, error) {
 	plan, err := Allocate(supernet, nil, defaultAZCount)
 	if err != nil {
 		return nil, fmt.Errorf("allocate network CIDRs: %w", err)
@@ -191,6 +209,221 @@ func orgEndpointPolicy() map[string]any {
 			},
 		},
 	}
+}
+
+// hubSpokeTemplate is the hub-and-spoke topology (ADR 0001 step 3): a shared hub
+// VPC holding the centralized org-conditioned interface endpoints, one private
+// spoke VPC per workload tier, and a Transit Gateway joining them with SEGREGATED
+// per-tier route tables — the routing fact that makes the ground:tier /
+// attest:data-classes isolation real (a spoke's TGW route table carries a route to
+// the hub but NOT to sibling spokes, so cross-tier traffic has no path).
+func (s *Stack) hubSpokeTemplate(supernet string, tiers []string) (*cfn.Template, error) {
+	plan, err := Allocate(supernet, tiers, defaultAZCount)
+	if err != nil {
+		return nil, fmt.Errorf("allocate network CIDRs: %w", err)
+	}
+
+	resources := map[string]any{
+		"TransitGateway": cfn.Resource("AWS::EC2::TransitGateway", map[string]any{
+			"Description": "ground hub-and-spoke transit gateway",
+			// Disable automatic association/propagation: ground manages per-tier route
+			// tables explicitly, so a new attachment must NOT auto-join a shared table
+			// (which would defeat tier isolation).
+			"DefaultRouteTableAssociation": "disable",
+			"DefaultRouteTablePropagation": "disable",
+			"Tags": []map[string]string{
+				cfn.Tag("Name", "ground-tgw"),
+				cfn.Tag("managed-by", "ground"),
+			},
+		}),
+	}
+	outputs := map[string]any{}
+
+	// Hub VPC: holds the centralized interface + gateway endpoints (shared by all
+	// spokes via the TGW), plus its own attachment + route table.
+	hubIDs := s.addVPC(resources, "Hub", plan.Hub, true)
+	addTGWAttachment(resources, "Hub", hubIDs)
+	resources["TGWRouteTableHub"] = tgwRouteTable("Hub")
+	resources["TGWAssocHub"] = tgwAssociation("Hub", "Hub")
+	outputs["HubVpcId"] = map[string]any{
+		"Description": "ID of the shared-services hub VPC",
+		"Value":       ref(hubIDs.vpc),
+		"Export":      map[string]string{"Name": "ground-hub-vpc-id"},
+	}
+
+	// One spoke VPC per tier. Each gets its own TGW route table with a single route
+	// to the hub — and crucially, no route to any sibling spoke. The hub's route
+	// table propagates every spoke (the hub can reach all spokes for shared
+	// endpoints); spoke tables do not propagate each other.
+	for _, sp := range plan.Spokes {
+		tier := sp.Name
+		lid := tierLogicalID(tier)
+		ids := s.addVPC(resources, lid, sp, false)
+		addTGWAttachment(resources, lid, ids)
+
+		// Spoke route table: associate the spoke's attachment, route 0/0-to-hub via
+		// the hub attachment (for shared endpoints), nothing toward siblings.
+		resources["TGWRouteTable"+lid] = tgwRouteTable(lid)
+		resources["TGWAssoc"+lid] = tgwAssociation(lid, lid)
+		resources["TGWRouteToHub"+lid] = cfn.Resource("AWS::EC2::TransitGatewayRoute", map[string]any{
+			"TransitGatewayRouteTableId": ref("TGWRouteTable" + lid),
+			"DestinationCidrBlock":       plan.Hub.CIDR.String(),
+			"TransitGatewayAttachmentId": ref("TGWAttachmentHub"),
+		})
+		// Hub can reach this spoke: a route in the hub table to the spoke CIDR.
+		resources["TGWRouteHubTo"+lid] = cfn.Resource("AWS::EC2::TransitGatewayRoute", map[string]any{
+			"TransitGatewayRouteTableId": ref("TGWRouteTableHub"),
+			"DestinationCidrBlock":       sp.CIDR.String(),
+			"TransitGatewayAttachmentId": ref("TGWAttachment" + lid),
+		})
+		outputs[lid+"VpcId"] = map[string]any{
+			"Description": fmt.Sprintf("ID of the %s spoke VPC", tier),
+			"Value":       ref(ids.vpc),
+		}
+	}
+
+	return &cfn.Template{
+		AWSTemplateFormatVersion: "2010-09-09",
+		Description:              "ground: network foundation (hub-and-spoke) — Transit Gateway with segregated per-tier route tables",
+		Parameters: map[string]any{
+			"OrgId": map[string]any{
+				"Type":           "String",
+				"Description":    "AWS Organizations ID (e.g., o-abcd1234). Retrieved automatically by 'ground deploy'.",
+				"AllowedPattern": "^o-[a-z0-9]{10,32}$",
+			},
+		},
+		Resources: resources,
+		Outputs:   outputs,
+	}, nil
+}
+
+// vpcLogicalIDs holds the logical IDs of a VPC block's key resources, so the TGW
+// wiring can reference them.
+type vpcLogicalIDs struct {
+	vpc        string
+	routeTable string
+	subnets    []string
+}
+
+// addVPC writes a private VPC block (VPC, private route table, per-AZ subnets +
+// associations) into resources under the given prefix, and — when withEndpoints —
+// the gateway + org-conditioned interface endpoints. Returns the logical IDs.
+func (s *Stack) addVPC(resources map[string]any, prefix string, alloc VPCAlloc, withEndpoints bool) vpcLogicalIDs {
+	vpcID := prefix + "VPC"
+	rtID := prefix + "PrivateRouteTable"
+	resources[vpcID] = cfn.Resource("AWS::EC2::VPC", map[string]any{
+		"CidrBlock":          alloc.CIDR.String(),
+		"EnableDnsSupport":   true,
+		"EnableDnsHostnames": true,
+		"Tags": []map[string]string{
+			cfn.Tag("Name", "ground-"+strings.ToLower(prefix)),
+			cfn.Tag("managed-by", "ground"),
+		},
+	})
+	resources[rtID] = cfn.Resource("AWS::EC2::RouteTable", map[string]any{
+		"VpcId": ref(vpcID),
+		"Tags": []map[string]string{
+			cfn.Tag("Name", "ground-"+strings.ToLower(prefix)+"-private"),
+			cfn.Tag("managed-by", "ground"),
+		},
+	})
+
+	ids := vpcLogicalIDs{vpc: vpcID, routeTable: rtID}
+	subnetRefs := make([]any, 0, len(alloc.Subnets))
+	for az, subnet := range alloc.Subnets {
+		sid := fmt.Sprintf("%sPrivateSubnet%d", prefix, az+1)
+		resources[sid] = cfn.Resource("AWS::EC2::Subnet", map[string]any{
+			"VpcId":     ref(vpcID),
+			"CidrBlock": subnet.String(),
+			"AvailabilityZone": map[string]any{
+				"Fn::Select": []any{az, map[string]any{"Fn::GetAZs": ""}},
+			},
+			"MapPublicIpOnLaunch": false,
+			"Tags": []map[string]string{
+				cfn.Tag("Name", fmt.Sprintf("ground-%s-private-%d", strings.ToLower(prefix), az+1)),
+				cfn.Tag("managed-by", "ground"),
+			},
+		})
+		resources[sid+"RTAssoc"] = cfn.Resource("AWS::EC2::SubnetRouteTableAssociation", map[string]any{
+			"SubnetId":     ref(sid),
+			"RouteTableId": ref(rtID),
+		})
+		ids.subnets = append(ids.subnets, sid)
+		subnetRefs = append(subnetRefs, ref(sid))
+	}
+
+	if withEndpoints {
+		for _, svc := range sortedUnique(s.cfg.VPCEndpoints) {
+			epID := prefix + endpointLogicalID(svc)
+			if gatewayEndpointServices[svc] {
+				resources[epID] = cfn.Resource("AWS::EC2::VPCEndpoint", map[string]any{
+					"VpcId":           ref(vpcID),
+					"ServiceName":     serviceName(svc, s.org.Region),
+					"VpcEndpointType": "Gateway",
+					"RouteTableIds":   []any{ref(rtID)},
+				})
+				continue
+			}
+			resources[epID] = cfn.Resource("AWS::EC2::VPCEndpoint", map[string]any{
+				"VpcId":             ref(vpcID),
+				"ServiceName":       serviceName(svc, s.org.Region),
+				"VpcEndpointType":   "Interface",
+				"PrivateDnsEnabled": true,
+				"SubnetIds":         subnetRefs,
+				"PolicyDocument":    orgEndpointPolicy(),
+			})
+		}
+	}
+	return ids
+}
+
+// addTGWAttachment attaches a VPC's private subnets to the Transit Gateway.
+func addTGWAttachment(resources map[string]any, prefix string, ids vpcLogicalIDs) {
+	subnetRefs := make([]any, 0, len(ids.subnets))
+	for _, sid := range ids.subnets {
+		subnetRefs = append(subnetRefs, ref(sid))
+	}
+	resources["TGWAttachment"+prefix] = cfn.Resource("AWS::EC2::TransitGatewayAttachment", map[string]any{
+		"TransitGatewayId": ref("TransitGateway"),
+		"VpcId":            ref(ids.vpc),
+		"SubnetIds":        subnetRefs,
+		"Tags": []map[string]string{
+			cfn.Tag("Name", "ground-tgw-attach-"+strings.ToLower(prefix)),
+			cfn.Tag("managed-by", "ground"),
+		},
+	})
+}
+
+// tgwRouteTable builds a segregated Transit Gateway route table for a tier.
+func tgwRouteTable(prefix string) map[string]any {
+	return cfn.Resource("AWS::EC2::TransitGatewayRouteTable", map[string]any{
+		"TransitGatewayId": ref("TransitGateway"),
+		"Tags": []map[string]string{
+			cfn.Tag("Name", "ground-tgw-rt-"+strings.ToLower(prefix)),
+			cfn.Tag("managed-by", "ground"),
+		},
+	})
+}
+
+// tgwAssociation associates a tier's attachment with its own route table.
+func tgwAssociation(rtPrefix, attachPrefix string) map[string]any {
+	return cfn.Resource("AWS::EC2::TransitGatewayRouteTableAssociation", map[string]any{
+		"TransitGatewayRouteTableId": ref("TGWRouteTable" + rtPrefix),
+		"TransitGatewayAttachmentId": ref("TGWAttachment" + attachPrefix),
+	})
+}
+
+// tierLogicalID turns a tier name into a CloudFormation-safe logical ID prefix,
+// e.g. "DoD-CMMC" → "SpokeDoDCMMC".
+func tierLogicalID(tier string) string {
+	var b strings.Builder
+	b.WriteString("Spoke")
+	for _, r := range tier {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func ref(logicalID string) map[string]string { return map[string]string{"Ref": logicalID} }

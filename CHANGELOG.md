@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Added
 
+- **Network foundation: hub-and-spoke + Transit Gateway** (`internal/stack/network/network.go`) — build
+  step 3 of ADR 0001. When `network.transit_gateway` is set and `org.workload_ous` lists tiers,
+  `Template()` now builds a shared **hub** VPC (holding the centralized gateway + org-conditioned
+  interface endpoints), one private **spoke** VPC per workload tier, and a **Transit Gateway** joining
+  them with **segregated per-tier route tables**: each spoke's TGW route table carries a route to the
+  hub (for the shared endpoints) but **none to sibling spokes**, so cross-tier traffic has no path —
+  the `ground:tier`/`attest:data-classes` isolation becomes a routing fact, not just a tag. The TGW
+  disables default route-table association/propagation (a new attachment must not silently join a
+  shared table). Falls back to the single-VPC path (step 2) when TGW is off or no tiers are declared.
+  Unit-tested as template data, including the **no-cross-spoke-route invariant** and the
+  default-table-disable guard; verified via `--dry-run`. (provabl/ground#10)
 - **Network foundation: single-VPC stack** (`internal/stack/network/network.go`) — build step 2 of
   ADR 0001 (the `TransitGateway:false` degrade path). `network.Stack.Template()` emits a private-only
   VPC (no Internet Gateway) on the deterministic hub `/16`, one private `/20` subnet per AZ (3 by
