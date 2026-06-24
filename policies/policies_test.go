@@ -222,35 +222,91 @@ func TestAccountTaggingHasFiveStatements(t *testing.T) {
 	}
 }
 
-// TestNitroAttestationSCPRequiresAttestedTag verifies the nitro-attestation SCP
-// denies sensitive-data actions unless the principal carries
-// aws:PrincipalTag/attest:nitro-attested == "true". This is the IAM-layer half of
-// the evidence kernel's runtime attestation: the nitro provider produces the
-// verdict, a tag carries it, and this SCP gates data access on it.
-func TestNitroAttestationSCPRequiresAttestedTag(t *testing.T) {
-	p := loadPolicy(t, "nitro_attestation_scp.json")
+// TestRuntimeAttestationSCPs verifies the per-kind runtime-attestation SCPs (the
+// IAM-layer half of the evidence kernel's runtime attestation). Per provabl ADR
+// 0003 (no conflation), the single attest:nitro-attested SCP was split into a
+// per-property pair plus an "either" variant, so an operator can require
+// enclave-grade isolation, measured-boot, or either — distinct trust strengths,
+// not one conflated boolean:
+//   - enclave_attestation_scp.json     → requires attest:enclave-attested (nitro)
+//   - boot_attestation_scp.json        → requires attest:boot-attested    (tpm)
+//   - runtime_attestation_either_scp.json → permit if EITHER tag is "true"
+func TestRuntimeAttestationSCPs(t *testing.T) {
+	sensitiveActions := []string{"s3:GetObject", "sagemaker:CreateTrainingJob"}
 
-	// Fail-closed: the policy must Deny (never Allow — an Allow would be a no-op).
-	if !p.AllDenyStatements() {
-		t.Error("nitro_attestation_scp must use only Deny statements; an Allow would be a no-op")
+	// The two single-kind SCPs: each denies unless its specific tag is present.
+	single := []struct {
+		file string
+		tag  string
+	}{
+		{"enclave_attestation_scp.json", "attest:enclave-attested"},
+		{"boot_attestation_scp.json", "attest:boot-attested"},
 	}
-
-	// The gating condition must be present.
-	if !hasNitroAttestationCondition(p) {
-		t.Error("nitro_attestation_scp must deny on StringNotEquals aws:PrincipalTag/attest:nitro-attested == \"true\"; " +
-			"without it, an unattested principal can access sensitive data")
-	}
-
-	// The sensitive-data actions must be covered by the gated statement.
-	sensitiveActions := []string{
-		"s3:GetObject",
-		"sagemaker:CreateTrainingJob",
-	}
-	for _, action := range sensitiveActions {
-		if !statementDeniesAction(p, action) {
-			t.Errorf("nitro_attestation_scp does not deny %s — unattested data-access path open", action)
+	for _, tc := range single {
+		p := loadPolicy(t, tc.file)
+		if !p.AllDenyStatements() {
+			t.Errorf("%s must use only Deny statements; an Allow would be a no-op", tc.file)
+		}
+		if !hasPrincipalTagNotEqualsCondition(p, tc.tag) {
+			t.Errorf("%s must deny on StringNotEquals aws:PrincipalTag/%s == \"true\"; "+
+				"without it, an un-attested principal can access sensitive data", tc.file, tc.tag)
+		}
+		for _, action := range sensitiveActions {
+			if !statementDeniesAction(p, action) {
+				t.Errorf("%s does not deny %s — un-attested data-access path open", tc.file, action)
+			}
+		}
+		// No conflation: the enclave SCP must not also accept the boot tag, and vice versa.
+		other := "attest:boot-attested"
+		if tc.tag == "attest:boot-attested" {
+			other = "attest:enclave-attested"
+		}
+		if hasPrincipalTagNotEqualsCondition(p, other) {
+			t.Errorf("%s must NOT reference %s — the per-kind SCPs are deliberately distinct (ADR 0003)", tc.file, other)
 		}
 	}
+
+	// The "either" SCP: a single StringNotEquals block listing BOTH tags ANDs them,
+	// so the Deny fires only when NEITHER is "true" — i.e. permit if either. Both
+	// keys must therefore be present in one statement.
+	either := loadPolicy(t, "runtime_attestation_either_scp.json")
+	if !either.AllDenyStatements() {
+		t.Error("runtime_attestation_either_scp must use only Deny statements")
+	}
+	if !hasPrincipalTagNotEqualsCondition(either, "attest:enclave-attested") ||
+		!hasPrincipalTagNotEqualsCondition(either, "attest:boot-attested") {
+		t.Error("runtime_attestation_either_scp must deny only when BOTH enclave- and boot-attested are absent " +
+			"(one StringNotEquals block with both keys → permit if either)")
+	}
+	if !bothTagsInOneStatement(either, "aws:PrincipalTag/attest:enclave-attested", "aws:PrincipalTag/attest:boot-attested") {
+		t.Error("runtime_attestation_either_scp: both tag keys must be in the SAME StringNotEquals block " +
+			"(separate statements would AND into 'require both', not 'either')")
+	}
+	for _, action := range sensitiveActions {
+		if !statementDeniesAction(either, action) {
+			t.Errorf("runtime_attestation_either_scp does not deny %s", action)
+		}
+	}
+}
+
+// bothTagsInOneStatement reports whether a single Deny statement's StringNotEquals
+// condition lists both tag keys (the "either" idiom — AND inside one block).
+func bothTagsInOneStatement(p *policy.Policy, keyA, keyB string) bool {
+	for _, s := range p.Statements {
+		if s.Effect != "Deny" || s.Condition == nil {
+			continue
+		}
+		cond, ok := s.Condition["StringNotEquals"].(map[string]any)
+		if !ok {
+			continue
+		}
+		_, hasA := cond[keyA]
+		_, hasB := cond[keyB]
+		if hasA && hasB {
+			return true
+		}
+	}
+	return false
 }
 
 // TestAMILaunchGatingSCPDeniesUnvettedAMIs verifies the AMI-launch-gating SCP
@@ -435,11 +491,11 @@ func lockdownHasVetterArnException(p *policy.Policy) bool {
 	return false
 }
 
-// hasNitroAttestationCondition returns true if p has a Deny statement whose
-// Condition is StringNotEquals on aws:PrincipalTag/attest:nitro-attested = "true"
-// (deny unless attested — covers both a missing and a non-"true" tag).
-func hasNitroAttestationCondition(p *policy.Policy) bool {
-	const tagKey = "aws:PrincipalTag/attest:nitro-attested"
+// hasPrincipalTagNotEqualsCondition returns true if p has a Deny statement whose
+// Condition is StringNotEquals on aws:PrincipalTag/<tag> == "true" (deny unless the
+// principal carries the tag — covers both a missing and a non-"true" tag).
+func hasPrincipalTagNotEqualsCondition(p *policy.Policy, tag string) bool {
+	tagKey := "aws:PrincipalTag/" + tag
 	for _, s := range p.Statements {
 		if s.Effect != "Deny" || s.Condition == nil {
 			continue

@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyDataAccessWithoutAnyRuntimeAttestation",
+      "Effect": "Deny",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "sagemaker:CreateTrainingJob",
+        "sagemaker:CreateNotebookInstance",
+        "sagemaker:CreateProcessingJob",
+        "bedrock:InvokeModel"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalTag/attest:enclave-attested": "true",
+          "aws:PrincipalTag/attest:boot-attested": "true"
+        }
+      }
+    }
+  ]
+}
