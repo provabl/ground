@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Changed
 
+- **Runtime-attestation SCP split per attestation kind, no conflation** (ground#29; provabl ADR 0003,
+  epic provabl#30). The single `nitro_attestation_scp.json` gated data access on the conflated
+  `attest:nitro-attested` tag — which couldn't distinguish enclave-grade isolation from measured-boot.
+  Replaced with three composable SCPs an operator picks by the grade the data demands:
+  `enclave_attestation_scp.json` (requires `attest:enclave-attested`, written by nitro),
+  `boot_attestation_scp.json` (requires `attest:boot-attested`, written by tpm), and
+  `runtime_attestation_either_scp.json` (one `StringNotEquals` block listing both tags → denies only
+  when *neither* is present, i.e. permit if either). Tests (`TestRuntimeAttestationSCPs`) verify each
+  single-kind SCP gates on its own tag and **not** the other (no conflation), and that the "either"
+  SCP keeps both keys in one statement (separate statements would AND into "require both").
+- **README trust-model section** (audit Tier-1): states the front-door honest limits — ground makes
+  zero compliance claims (attest does, after a scan); SCPs do not restrict the Org management account;
+  the runtime-attestation SCPs are only as strong as the producer (nitro/tpm) that writes their tags.
+
 - **AMI-vetting lockdown SCP now also protects the golden-PCR tags** (provabl#13): `policies/ami_vetting_lockdown_scp.json`
   extends its `aws:TagKeys` condition (now `ForAnyValue:StringLike`) to cover `attest:pcr*` alongside
   `attest:vetted`, so only the vetter can write the golden boot-measurement tags `vet ami-reference`

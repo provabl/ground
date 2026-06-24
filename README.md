@@ -49,6 +49,24 @@ Every policy ground deploys is tested before it ships. Permission boundaries, VP
 endpoint policies, and tagging SCPs are verified by policy unit tests — the same
 test-driven approach used across the Provabl suite.
 
+## Trust model — what ground does and does not guarantee
+
+Read this before relying on ground for a compliance claim:
+
+- **ground makes zero compliance claims.** It deploys a *correct foundation* (org
+  structure, network, logging, baseline SCPs). Whether that foundation *satisfies* a
+  framework is **attest**'s judgment, made after `attest scan` — not ground's. ground
+  shipping cleanly is necessary, not sufficient, for compliance.
+- **SCPs do not restrict the Organization management account.** AWS Service Control
+  Policies never apply to the management (payer) account or its root user. Every
+  guardrail ground deploys gates *member* accounts; the management account is governed
+  operationally, not by these SCPs. Run workloads in member accounts, not the root.
+- **The runtime-attestation SCPs gate on tags a producer must write.** The
+  enclave/boot-attestation SCPs deny data access unless `attest:enclave-attested` /
+  `attest:boot-attested` is present — but ground does not *produce* those tags (nitro/tpm
+  do). The gate is only as strong as the producer's attestation and the principal-tag
+  integrity behind it.
+
 ## Status
 
 🚧 **Under active development** — initial CDK stacks being built.
