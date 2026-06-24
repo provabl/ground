@@ -47,6 +47,15 @@ IAM-Identity-Center permissions — run `ground preflight` to verify the calling
 before `ground deploy`. `ground deploy --dry-run` renders every stack as CloudFormation JSON without
 touching AWS.
 
+## Core concepts
+
+The handful of ideas to hold while reading the rest (terms link to the suite [glossary](https://github.com/provabl/provabl/blob/main/docs/guide/glossary.md)):
+
+- **[Organization / OU](https://github.com/provabl/provabl/blob/main/docs/guide/glossary.md#organization--ou)** — ground deploys an AWS org and a tiered OU tree; policies attach to OUs and apply to every account inside.
+- **[SCP](https://github.com/provabl/provabl/blob/main/docs/guide/glossary.md#scp-service-control-policy)** — the org-wide guardrails ground ships (logging-protection, AMI gating, the runtime-attestation gates). The coarse half of the suite's two-layer enforcement.
+- **[Two-layer enforcement](https://github.com/provabl/provabl/blob/main/docs/guide/glossary.md#two-layer-enforcement)** — ground's SCP is the blunt outer gate; attest's [Cedar](https://github.com/provabl/provabl/blob/main/docs/guide/glossary.md#cedar) PDP is the fine inner decision. ground provides the first, never the second.
+- **Foundation, not claims** — ground gets the structure right; **attest** makes the compliance claims, after a scan. (See Trust model below.)
+
 ## What it deploys
 
 | Layer | Components |
