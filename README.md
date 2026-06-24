@@ -34,6 +34,19 @@ attest apply --approve                # deploy policies to the org
 attest scan                           # NOW we can make compliance claims
 ```
 
+## Install
+
+```bash
+go install github.com/provabl/ground/cmd/ground@latest   # requires Go 1.26.4+
+# or build from a clone: go build ./cmd/ground
+```
+
+**Prerequisites.** Go 1.26.4+, and AWS credentials for the **Organization management account** (ground
+deploys org-wide structure: accounts, OUs, SCPs, logging). It needs Organizations + CloudFormation +
+IAM-Identity-Center permissions — run `ground preflight` to verify the calling principal holds them
+before `ground deploy`. `ground deploy --dry-run` renders every stack as CloudFormation JSON without
+touching AWS.
+
 ## What it deploys
 
 | Layer | Components |
