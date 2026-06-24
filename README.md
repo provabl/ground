@@ -16,6 +16,15 @@ Part of the [Provabl](https://provabl.dev) suite:
 ground deploys a correctly-configured AWS organization that attest can manage.
 It makes **zero compliance claims** — attest makes those after `attest scan`.
 
+```mermaid
+flowchart LR
+    cfg["ground.yaml"] --> ground["<b>ground</b><br/>deploy org foundation"]
+    ground --> org["AWS org<br/>accounts · OUs · network · logging · baseline SCPs"]
+    ground --> meta["ground-meta.json"]
+    org -->|"standard AWS Organizations APIs"| attest["<b>attest</b><br/>(attest init → scan → claims)"]
+    meta -->|"optional handoff"| attest
+```
+
 ```bash
 ground deploy --config ground.yaml   # deploy AWS organization foundation
 attest init --region us-east-1        # attest discovers the deployed org
