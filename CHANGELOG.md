@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-21
+
 ### Security
 
 - **Bump Go 1.26.4 → 1.26.5** to clear **GO-2026-5856** (a `crypto/tls` standard-library vulnerability, fixed in go1.26.5). govulncheck flagged it as symbol-reachable via ground's TLS calls (AWS Organizations/CloudFormation/IAM SDK). Toolchain bump only — no code changes.
@@ -202,6 +204,7 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 - Configuration schema: org, network, identity, logging, security, tagging
 - `ground.example.yaml` reference configuration
 
-[Unreleased]: https://github.com/provabl/ground/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/provabl/ground/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/provabl/ground/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/provabl/ground/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/provabl/ground/releases/tag/v0.1.0
