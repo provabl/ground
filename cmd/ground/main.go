@@ -479,10 +479,12 @@ func runExportIaC(configPath, format, outDir string) error {
 	if iac.IsHCL(f) {
 		tool := iac.Tool(f)
 		fmt.Printf("  %s init\n", tool)
-		fmt.Printf("  %s plan     # read the plan — it is 12 resources, not a foundation\n", tool)
+		fmt.Printf("  %s plan      # read the plan before applying\n", tool)
 		fmt.Printf("  %s apply\n", tool)
 		fmt.Println()
-		fmt.Printf("  Optional: set TF_VAR_identity_center_instance_arn for permission sets\n")
+		fmt.Println("  Credentials must be for the Organization MANAGEMENT account — the export")
+		fmt.Println("  creates OUs and an SCP. Set identity_center.instance_arn in the config to")
+		fmt.Println("  include the permission sets.")
 	} else {
 		fmt.Println("  npm install")
 		fmt.Println("  npm run build")

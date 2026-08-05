@@ -21,27 +21,46 @@ jobs:
       - name: Build
         run: go build ./...
 
-      # internal/iac asserts the generated HCL is fmt-canonical by shelling out to
-      # a real binary, and SKIPS if none is present — so without this the check
-      # silently passes. terraform-wrapper is off so exec.LookPath finds the real
-      # binary. 'fmt -check'/'validate' are read-only and never contact AWS.
-      - name: Set up Terraform (for the HCL fmt check)
+      # internal/iac's toolchain checks shell out to a real binary and SKIP if none
+      # is present, so without these the checks silently pass. The *_wrapper: false
+      # options matter: the default wrapper is a shell script exec.LookPath would
+      # find but that mangles output. 'fmt -check', 'init -backend=false' and
+      # 'validate' are read-only — no credentials, no AWS API calls.
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+
       - name: Test
         run: go test ./...
 
-      # Fail loudly if the fmt check skipped rather than ran: a silent skip means
-      # the "generated HCL is fmt-clean" guarantee isn't actually being enforced.
-      - name: Verify the HCL fmt check did not skip
+      # The export's parity claim rests on more than the Go tests: the HCL must be
+      # fmt-canonical (the file says "do not edit manually", so formatting is the
+      # generator's job) and must validate against the real AWS provider, which is
+      # what catches a transpiled argument that doesn't exist on its resource.
+      #
+      # Run both under BOTH toolchains. The Go tests prove terraform and opentofu
+      # get a byte-identical main.tf; only running each tool proves both accept it.
+      # A skip here is a failure — an unenforced guarantee reads as an enforced one.
+      - name: Verify the HCL is fmt-clean and validates under both toolchains
+        env:
+          GROUND_IAC_VALIDATE: "1"
         run: |
-          go test ./internal/iac/ -run TestHCL_IsFmtClean -v | tee /tmp/fmt.log
-          if grep -q "SKIP" /tmp/fmt.log; then
-            echo "::error::TestHCL_IsFmtClean skipped — terraform/tofu missing from the runner"
-            exit 1
-          fi
+          for tool in terraform tofu; do
+            echo "::group::$tool"
+            GROUND_IAC_TOOL="$tool" go test ./internal/iac/ -count=1 -v \
+              -run 'TestHCL_IsFmtClean|TestHCL_Validates' | tee "/tmp/hcl-$tool.log"
+            echo "::endgroup::"
+            if grep -q "SKIP" "/tmp/hcl-$tool.log"; then
+              echo "::error::the HCL checks skipped under $tool — it is missing from the runner"
+              exit 1
+            fi
+          done
 
       - name: Vet
         run: go vet ./...

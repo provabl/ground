@@ -1,26 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Playground Logic LLC
 // SPDX-License-Identifier: Apache-2.0
 
-// Package iac generates Infrastructure-as-Code artifacts for ground stacks.
+// Package iac exports a ground foundation as Infrastructure-as-Code for
+// operators who standardise on a toolchain other than CloudFormation.
 //
-// **Native CloudFormation is ground's deploy path.** The generators here are
-// *exports* for operators who standardise on another tool, and they are
-// deliberately **partial** — see [Coverage]. Two things follow from that, and
-// both are enforced rather than merely documented:
+// **CloudFormation remains ground's deploy path**; these are exports. The two
+// formats differ in how they are produced, and that difference is what decides
+// whether each can be trusted:
 //
-//   - An export is not a foundation. It creates the OU hierarchy and the
-//     Identity Center permission sets, and **no guardrails at all** — no SCPs,
-//     no CloudTrail/Config logging, no network. An operator who runs
-//     `terraform apply` on an export has an org *shape* with nothing enforcing
-//     anything, which is a strictly worse position than not deploying, because
-//     it looks done. So every export carries the gap in-band: a banner on
-//     stdout, a warning header in the artifact itself, and a coverage table in
-//     the generated README.
-//   - `attest scan` is what establishes posture either way. ground makes zero
-//     compliance claims, and an export makes even fewer.
+//   - **terraform / opentofu** — *transpiled* from the same [cfn.Template]
+//     values `ground deploy` submits (see transpile.go). Because the HCL is
+//     derived from the templates rather than written alongside them, a resource
+//     added to internal/stack appears in the export automatically, and one the
+//     transpiler cannot represent faithfully is an [UnsupportedError] rather
+//     than a silent omission. This is at parity, enforced by tests that compare
+//     the export against the stacks themselves.
+//   - **cdk** — still a hand-written subset: the OU hierarchy and permission
+//     sets, and no guardrails at all. Applying it yields an org *shape* with
+//     nothing enforcing anything, which is worse than deploying nothing because
+//     it looks done.
 //
-// Formats: terraform / opentofu (the same HCL — `hashicorp/aws ~> 5.0`, no
-// tool-specific features, validated under both) and cdk (TypeScript, CDK v2).
+// [Coverage] carries that distinction as data, and every artifact states its own
+// coverage in-band: a banner on stdout, a header in the generated file, and a
+// table in the generated README, all rendered from the one record so they cannot
+// drift.
+//
+// `attest scan` is what establishes posture in every case — ground makes zero
+// compliance claims, whichever toolchain applied the foundation.
 package iac
 
 import (
@@ -31,6 +37,11 @@ import (
 	"strings"
 
 	"github.com/provabl/ground/internal/config"
+	"github.com/provabl/ground/internal/stack/accounts"
+	"github.com/provabl/ground/internal/stack/identity"
+	"github.com/provabl/ground/internal/stack/logging"
+	"github.com/provabl/ground/internal/stack/network"
+	"github.com/provabl/ground/internal/stack/security"
 )
 
 // Format identifies the IaC output format.
@@ -52,34 +63,71 @@ const (
 // generator gains SCP or logging support, moving one entry from Missing to
 // Covered updates every warning at once.
 type Coverage struct {
+	// Complete reports whether the export reproduces every resource ground's
+	// CloudFormation deploys. It selects the banner: a complete export gets a
+	// caveat, an incomplete one gets a warning.
+	Complete bool
 	// Covered is what the export actually creates.
 	Covered []string
-	// Missing is what a ground foundation has and the export does NOT create.
+	// Missing is what the export does NOT create. For a complete export these are
+	// things the CloudFormation path does not create either.
 	Missing []string
 }
 
-// exportCoverage is the current, honest state of both generators. Terraform and
-// CDK have the same gap because they were written from the same subset.
+// hclCoverage describes the HCL export, which is transpiled from the same
+// cfn.Templates `ground deploy` submits and therefore reproduces every resource
+// in them. TestHCL_CoversEveryStackResource enforces that claim against the
+// stacks themselves, so this cannot quietly become untrue.
 //
-// Verified against the CloudFormation stacks in internal/stack: a dry-run of the
-// example config emits 62 resources, of which the exports reproduce 12.
-var exportCoverage = Coverage{
+// The remaining Missing entries are things the *CloudFormation path does not
+// deploy either* — they are listed so an operator reading only the export's
+// README does not mistake a complete export for a complete compliance posture.
+var hclCoverage = Coverage{
+	Complete: true,
+	Covered: []string{
+		"Organizational Units — the full 8-OU hierarchy, including the nested sub-OUs",
+		"Logging foundation — S3 audit bucket (KMS, versioning, Object Lock, lifecycle), bucket policy, org-wide CloudTrail, AWS Config recorder + delivery channel + role",
+		"The logging-protection SCP — created AND attached to the org root",
+		"Network — Transit Gateway, hub and per-tier spoke VPCs, subnets, route tables, segregated TGW route tables/associations/routes, and the org-conditioned VPC endpoints",
+		"IAM Identity Center permission sets (5) — including their managed-policy attachments, when an instance ARN is configured",
+	},
+	Missing: []string{
+		"Framework SCPs — the policy documents in ground/policies/ are compiled and attached by 'attest compile' + 'attest apply', not by ground, in either path",
+		"Security detection services — GuardDuty, Security Hub, and Macie are enabled by attest after it knows which frameworks are active; the CloudFormation path does not create them either",
+		"Compliance claims — ground makes none. Run 'attest scan' for posture, whichever toolchain applied the foundation",
+	},
+}
+
+// cdkCoverage describes the CDK export, which is still hand-written from a
+// subset. It is listed separately from [hclCoverage] rather than sharing one
+// blurred description, because a single Coverage covering both would have to
+// describe the weaker of the two and would understate the HCL.
+var cdkCoverage = Coverage{
 	Covered: []string{
 		"Organizational Units — the full 8-OU hierarchy, including the nested sub-OUs",
 		"IAM Identity Center permission sets (4) — when an instance ARN is supplied",
 	},
 	Missing: []string{
-		"Service Control Policies — NO guardrails are created or attached (13 policy documents in ground/policies/, including the AMI-gating and runtime-attestation SCPs)",
+		"Service Control Policies — the logging-protection SCP is NOT created or attached",
 		"Logging foundation — no S3 audit bucket, no org-wide CloudTrail, no AWS Config recorder",
 		"Network — no VPCs, subnets, Transit Gateway, or VPC endpoints",
 		"Security services — no GuardDuty, Security Hub, or Macie enablement",
 	},
 }
 
-// IsPartial reports whether f produces a partial export. Every non-CloudFormation
-// format currently does; this exists so callers ask the question rather than
-// hardcoding the answer.
-func IsPartial(f Format) bool { return f != FormatCloudFormation }
+// coverageFor returns the coverage record for f.
+func coverageFor(f Format) Coverage {
+	if IsHCL(f) {
+		return hclCoverage
+	}
+	return cdkCoverage
+}
+
+// IsPartial reports whether f produces a partial export — one that does not
+// reproduce every resource ground's CloudFormation deploys. The HCL export is
+// transpiled from those templates and is complete; CDK is still a hand-written
+// subset.
+func IsPartial(f Format) bool { return f != FormatCloudFormation && !IsHCL(f) }
 
 // IsHCL reports whether f is one of the HCL formats. terraform and opentofu
 // generate byte-identical output — the HCL uses only hashicorp/aws and no
@@ -135,7 +183,11 @@ func (c Coverage) Warning(prefix string) string {
 	w := func(s string) { b.WriteString(strings.TrimRight(prefix+s, " ") + "\n") }
 
 	w("╔══════════════════════════════════════════════════════════════════════════╗")
-	w("║  PARTIAL EXPORT — THIS IS NOT A COMPLETE ground FOUNDATION               ║")
+	if c.Complete {
+		w("║  COMPLETE EXPORT — transpiled from ground's own CloudFormation           ║")
+	} else {
+		w("║  PARTIAL EXPORT — THIS IS NOT A COMPLETE ground FOUNDATION               ║")
+	}
 	w("╚══════════════════════════════════════════════════════════════════════════╝")
 	w("")
 	w("Creates:")
@@ -148,14 +200,21 @@ func (c Coverage) Warning(prefix string) string {
 		w("  ✗ " + s)
 	}
 	w("")
-	w("Applying this gives you the org SHAPE with NOTHING ENFORCING ANYTHING.")
-	w("That is more dangerous than deploying nothing, because it looks finished.")
+	if c.Complete {
+		w("Every resource here is transpiled from the same templates 'ground deploy'")
+		w("submits, so the two paths deploy the same foundation. What differs is the")
+		w("state: applying this makes your tool the owner of these resources. Do not")
+		w("apply it over an org ground already deployed — import first, or you will")
+		w("get duplicate-name errors on the OUs and the SCP.")
+	} else {
+		w("Applying this gives you the org SHAPE with NOTHING ENFORCING ANYTHING.")
+		w("That is more dangerous than deploying nothing, because it looks finished.")
+		w("")
+		w("For a complete foundation use ground's own deploy path:")
+		w("    ground deploy --config ground.yaml")
+	}
 	w("")
-	w("For a complete foundation use ground's own deploy path:")
-	w("    ground deploy --config ground.yaml")
-	w("")
-	w("If you must standardise on another toolchain, deploy the guardrails some other")
-	w("way and verify posture with 'attest scan' — ground makes zero compliance claims.")
+	w("ground makes zero compliance claims either way — verify posture with 'attest scan'.")
 	return b.String()
 }
 
@@ -177,7 +236,7 @@ func NewGenerator(format Format, outputDir, version string) *Generator {
 }
 
 // Coverage reports what this generator's output does and does not include.
-func (g *Generator) Coverage() Coverage { return exportCoverage }
+func (g *Generator) Coverage() Coverage { return coverageFor(g.format) }
 
 // Generate produces IaC artifacts. It writes files and deploys nothing.
 func (g *Generator) Generate(cfg *config.Config) error {
@@ -217,196 +276,301 @@ func (g *Generator) writeFiles(files map[string]string) error {
 
 // readmeCoverageTable renders the coverage as Markdown for a generated README.
 func (g *Generator) readmeCoverageTable() string {
+	c := coverageFor(g.format)
+
 	var b strings.Builder
-	b.WriteString("## ⚠️ This is a PARTIAL export — not a complete ground foundation\n\n")
+	if c.Complete {
+		b.WriteString("## Coverage — transpiled from ground's own CloudFormation\n\n")
+	} else {
+		b.WriteString("## ⚠️ This is a PARTIAL export — not a complete ground foundation\n\n")
+	}
 	b.WriteString("| | Component |\n|---|---|\n")
-	for _, s := range exportCoverage.Covered {
+	for _, s := range c.Covered {
 		b.WriteString("| ✅ | " + s + " |\n")
 	}
-	for _, s := range exportCoverage.Missing {
+	for _, s := range c.Missing {
 		b.WriteString("| ❌ | **" + s + "** |\n")
 	}
-	b.WriteString("\nApplying this gives you the organizational *shape* with **nothing enforcing anything**.\n")
-	b.WriteString("No SCP restricts any action; no CloudTrail records any API call. That is a worse\n")
-	b.WriteString("position than deploying nothing, because it looks finished.\n\n")
-	b.WriteString("For a complete foundation, use ground's own deploy path:\n\n")
-	b.WriteString("```bash\nground deploy --config ground.yaml\n```\n\n")
+	b.WriteString("\n")
+	if c.Complete {
+		b.WriteString("Every resource above is transpiled from the same `cfn.Template` values `ground deploy`\n")
+		b.WriteString("submits to CloudFormation, so both paths deploy the same foundation. A resource the\n")
+		b.WriteString("transpiler cannot represent faithfully is a hard error, never a silent omission.\n\n")
+		b.WriteString("**State ownership is the real difference.** Applying this makes your tool the owner of\n")
+		b.WriteString("these resources. Do not apply it over an org `ground deploy` already created — the OU\n")
+		b.WriteString("names and the SCP name are unique, so you will get duplicate-name errors. Import the\n")
+		b.WriteString("existing resources first, or start from an org neither tool has touched.\n\n")
+	} else {
+		b.WriteString("Applying this gives you the organizational *shape* with **nothing enforcing anything**.\n")
+		b.WriteString("No SCP restricts any action; no CloudTrail records any API call. That is a worse\n")
+		b.WriteString("position than deploying nothing, because it looks finished.\n\n")
+		b.WriteString("For a complete foundation, use ground's own deploy path:\n\n")
+		b.WriteString("```bash\nground deploy --config ground.yaml\n```\n\n")
+	}
 	b.WriteString("ground makes **zero compliance claims** either way — run `attest scan` for posture.\n")
 	return b.String()
 }
 
 // --- Terraform / OpenTofu (identical HCL) -------------------------------------
 
+// hclStacks builds every CloudFormation template ground would deploy, in the
+// same order and from the same code path as `ground deploy`.
+//
+// The exports are transpiled from these, not written alongside them. That is the
+// whole reason parity holds: a resource added to internal/stack appears in the
+// export automatically, and one the transpiler cannot render is a hard error.
+func hclStacks(cfg *config.Config) ([]stackTemplate, error) {
+	logTmpl, err := logging.New(&cfg.Logging, &cfg.Org).Template()
+	if err != nil {
+		return nil, fmt.Errorf("logging stack: %w", err)
+	}
+	secTmpl, err := security.New(&cfg.Security, &cfg.Org).Template()
+	if err != nil {
+		return nil, fmt.Errorf("security stack: %w", err)
+	}
+	accountsTmpl, err := accounts.New(&cfg.Org).Template()
+	if err != nil {
+		return nil, fmt.Errorf("accounts stack: %w", err)
+	}
+	identityTmpl, err := identity.New(&cfg.Identity).Template()
+	if err != nil {
+		return nil, fmt.Errorf("identity stack: %w", err)
+	}
+	netTmpl, err := network.New(&cfg.Network, &cfg.Org).Template()
+	if err != nil {
+		return nil, fmt.Errorf("network stack: %w", err)
+	}
+
+	// Same order as runDeploy: logging and its protection SCP, then the org
+	// structure, then the network that rides on it.
+	return []stackTemplate{
+		{title: "Logging foundation — S3 audit bucket, CloudTrail, AWS Config", template: logTmpl},
+		{title: "Security — the logging-protection SCP", template: secTmpl},
+		{title: "Account structure — the OU hierarchy", template: accountsTmpl},
+		{title: "Identity — IAM Identity Center permission sets", template: identityTmpl},
+		{title: "Network — Transit Gateway, VPCs, subnets, endpoints", template: netTmpl},
+	}, nil
+}
+
+// dataSourceBlocks declares the Terraform data sources the transpiled
+// expressions reference — exactly those, so there are no unused declarations and
+// no dangling references.
+var dataSourceBlocks = map[string]hclBlock{
+	"aws_organizations_organization": {header: `data "aws_organizations_organization" "current"`},
+	"aws_availability_zones": {
+		header: `data "aws_availability_zones" "available"`,
+		args:   []string{arg("state", `"available"`)},
+	},
+	"aws_caller_identity": {header: `data "aws_caller_identity" "current"`},
+	"aws_region":          {header: `data "aws_region" "current"`},
+	"aws_partition":       {header: `data "aws_partition" "current"`},
+}
+
 func (g *Generator) generateHCL(cfg *config.Config) error {
 	tool := Tool(g.format)
+
+	stacks, err := hclStacks(cfg)
+	if err != nil {
+		return err
+	}
+
+	t := newTranspiler()
+	if err := t.plan(stacks); err != nil {
+		return err
+	}
+
+	// Render resources first: it is what populates the data-source and variable
+	// sets that the preamble has to declare.
+	var body strings.Builder
+	for _, st := range stacks {
+		blocks, err := t.emitStack(st)
+		if err != nil {
+			return err
+		}
+		if len(blocks) == 0 {
+			continue
+		}
+		body.WriteString("# ── " + st.title + " " + strings.Repeat("─", max(0, 68-len(st.title))) + "\n\n")
+		for _, b := range blocks {
+			body.WriteString(b.render(""))
+			body.WriteString("\n")
+		}
+	}
 
 	var b strings.Builder
 	b.WriteString("# SPDX-FileCopyrightText: 2026 Playground Logic LLC\n")
 	b.WriteString("# SPDX-License-Identifier: Apache-2.0\n")
-	b.WriteString("# Generated by ground " + g.version + ". Do not edit manually.\n#\n")
-	b.WriteString(exportCoverage.Warning("# "))
+	b.WriteString("# Generated by ground " + g.version + " from the same CloudFormation templates\n")
+	b.WriteString("# 'ground deploy' submits. Do not edit manually — edit internal/stack and re-export.\n#\n")
+	b.WriteString(hclCoverage.Warning("# "))
 	b.WriteString("\n")
 
-	// NOTE: this block is terraform-fmt-canonical (verified by TestHCL_IsFmtClean).
-	// Alignment matters: `terraform fmt` aligns consecutive single-line
-	// assignments, so hand-written padding that looks tidy is often wrong.
-	b.WriteString(`terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
+	// Terraform / provider requirements and the provider itself.
+	b.WriteString(hclBlock{
+		header: "terraform",
+		args:   []string{arg("required_version", `">= 1.5"`)},
+		nested: []hclBlock{{
+			header: "required_providers",
+			nested: []hclBlock{{
+				// An attribute holding an object, not a block — `aws { ... }` is a parse
+				// error inside required_providers.
+				header: "aws =",
+				args:   []string{arg("source", `"hashicorp/aws"`), arg("version", `"~> 5.0"`)},
+			}},
+		}},
+	}.render(""))
+	b.WriteString("\n")
+	b.WriteString(hclBlock{header: `provider "aws"`, args: []string{arg("region", "var.region")}}.render(""))
+	b.WriteString("\n")
 
-provider "aws" {
-  region = var.region
-}
+	// Variables: region, plus one per CloudFormation parameter that `ground deploy`
+	// does not auto-discover.
+	b.WriteString(hclBlock{
+		header: `variable "region"`,
+		args: []string{
+			arg("description", `"AWS region"`),
+			arg("type", "string"),
+			arg("default", quoteHCL(cfg.Org.Region)),
+		},
+	}.render(""))
+	b.WriteString("\n")
+	for _, name := range sortedVarNames(t.paramVars) {
+		p := t.paramVars[name]
+		vb := hclBlock{header: fmt.Sprintf("variable %q", tfName(name))}
+		if p.description != "" {
+			vb.args = append(vb.args, arg("description", quoteHCL(p.description)))
+		}
+		vb.args = append(vb.args, arg("type", "string"))
+		if p.defaultVal != "" {
+			vb.args = append(vb.args, arg("default", quoteHCL(p.defaultVal)))
+		}
+		b.WriteString(vb.render(""))
+		b.WriteString("\n")
+	}
 
-variable "region" {
-  description = "AWS region"
-  type        = string
-  default     = "` + cfg.Org.Region + `"
-}
+	for _, name := range sortedBoolKeys(t.resolver.dataSources) {
+		ds, ok := dataSourceBlocks[name]
+		if !ok {
+			// Unreachable unless a resolver gains a data source without declaring it
+			// here; failing is better than emitting a dangling reference.
+			return fmt.Errorf("internal: no declaration for data source %q", name)
+		}
+		b.WriteString(ds.render(""))
+		b.WriteString("\n")
+	}
 
-variable "identity_center_instance_arn" {
-  description = "IAM Identity Center instance ARN. Empty disables permission sets."
-  type        = string
-  default     = ""
-}
+	b.WriteString(hclBlock{
+		header: "locals",
+		nested: []hclBlock{{
+			// An attribute holding an object literal, not a block — HCL renders the
+			// two identically, so hclBlock can express it with a header ending in "=".
+			header: "managed_tags =",
+			args: []string{
+				`"managed-by"     = "ground"`,
+				`"ground:version" = ` + quoteHCL(g.version),
+				`"ground:export"  = "hcl"`,
+			},
+		}},
+	}.render(""))
+	b.WriteString("\n")
 
-data "aws_organizations_organization" "current" {}
+	b.WriteString(body.String())
 
-locals {
-  org_root_id = data.aws_organizations_organization.current.roots[0].id
-  managed_tags = {
-    "managed-by"     = "ground"
-    "ground:version" = "` + g.version + `"
-    "ground:export"  = "hcl-partial"
-  }
-}
-
-# ── Organizational Units ───────────────────────────────────────────────────
-
-resource "aws_organizations_organizational_unit" "security" {
-  name      = "Security"
-  parent_id = local.org_root_id
-  tags      = merge(local.managed_tags, { "ground:tier" = "security" })
-}
-
-resource "aws_organizations_organizational_unit" "infrastructure" {
-  name      = "Infrastructure"
-  parent_id = local.org_root_id
-  tags      = merge(local.managed_tags, { "ground:tier" = "infrastructure" })
-}
-
-resource "aws_organizations_organizational_unit" "research" {
-  name      = "Research"
-  parent_id = local.org_root_id
-  tags      = merge(local.managed_tags, { "ground:tier" = "research" })
-}
-
-resource "aws_organizations_organizational_unit" "sensitive_research" {
-  name      = "SensitiveResearch"
-  parent_id = local.org_root_id
-  tags      = merge(local.managed_tags, { "ground:tier" = "sensitive" })
-}
-
-resource "aws_organizations_organizational_unit" "dod_cmmc" {
-  name      = "DoD-CMMC"
-  parent_id = local.org_root_id
-  tags      = merge(local.managed_tags, { "ground:tier" = "dod" })
-}
-
-# Sub-OUs under SensitiveResearch. vendor resolves these BY NAME (ground-meta
-# carries no OU ids), so renaming one breaks 'vendor provision --type'.
-resource "aws_organizations_organizational_unit" "nih_genomic" {
-  name      = "NIHGenomic"
-  parent_id = aws_organizations_organizational_unit.sensitive_research.id
-  tags      = merge(local.managed_tags, { "ground:tier" = "sensitive", "ground:data-scope" = "genomic" })
-}
-
-resource "aws_organizations_organizational_unit" "hipaa_research" {
-  name      = "HIPAAResearch"
-  parent_id = aws_organizations_organizational_unit.sensitive_research.id
-  tags      = merge(local.managed_tags, { "ground:tier" = "sensitive", "ground:data-scope" = "phi" })
-}
-
-resource "aws_organizations_organizational_unit" "cui_research" {
-  name      = "CUIResearch"
-  parent_id = aws_organizations_organizational_unit.sensitive_research.id
-  tags      = merge(local.managed_tags, { "ground:tier" = "sensitive", "ground:data-scope" = "cui" })
-}
-
-# ── IAM Identity Center Permission Sets ───────────────────────────────────
-#
-# These create the permission sets only. The MFA / IP-allowlist conditions the
-# descriptions mention are enforced by SCPs and permission boundaries that this
-# export does NOT create — the names below promise more than the HCL delivers.
-
-resource "aws_ssoadmin_permission_set" "ground_user" {
-  count            = var.identity_center_instance_arn != "" ? 1 : 0
-  name             = "GroundUser"
-  description      = "Standard user access — Research OU"
-  instance_arn     = var.identity_center_instance_arn
-  session_duration = "PT1H"
-  tags             = local.managed_tags
-}
-
-resource "aws_ssoadmin_permission_set" "ground_sensitive_user" {
-  count            = var.identity_center_instance_arn != "" ? 1 : 0
-  name             = "GroundSensitiveUser"
-  description      = "Sensitive Research OU — FIDO2 MFA required, IP allowlist enforced"
-  instance_arn     = var.identity_center_instance_arn
-  session_duration = "PT1H"
-  tags             = local.managed_tags
-}
-
-resource "aws_ssoadmin_permission_set" "ground_sre_admin" {
-  count            = var.identity_center_instance_arn != "" ? 1 : 0
-  name             = "GroundSREAdmin"
-  description      = "SRE administrator — phishing-resistant MFA, all sessions logged"
-  instance_arn     = var.identity_center_instance_arn
-  session_duration = "PT1H"
-  tags             = local.managed_tags
-}
-
-resource "aws_ssoadmin_permission_set" "ground_auditor" {
-  count            = var.identity_center_instance_arn != "" ? 1 : 0
-  name             = "GroundAuditor"
-  description      = "Read-only auditor access — 8-hour session"
-  instance_arn     = var.identity_center_instance_arn
-  session_duration = "PT8H"
-  tags             = local.managed_tags
-}
-
-# ── Outputs ───────────────────────────────────────────────────────────────
-
-output "security_ou_id" { value = aws_organizations_organizational_unit.security.id }
-output "infrastructure_ou_id" { value = aws_organizations_organizational_unit.infrastructure.id }
-output "research_ou_id" { value = aws_organizations_organizational_unit.research.id }
-output "sensitive_research_ou_id" { value = aws_organizations_organizational_unit.sensitive_research.id }
-output "dod_cmmc_ou_id" { value = aws_organizations_organizational_unit.dod_cmmc.id }
-output "nih_genomic_ou_id" { value = aws_organizations_organizational_unit.nih_genomic.id }
-output "hipaa_research_ou_id" { value = aws_organizations_organizational_unit.hipaa_research.id }
-output "cui_research_ou_id" { value = aws_organizations_organizational_unit.cui_research.id }
-`)
+	// Outputs, transpiled from every stack's Outputs.
+	outputs, err := t.emitOutputs(stacks)
+	if err != nil {
+		return err
+	}
+	if len(outputs) > 0 {
+		b.WriteString("# ── Outputs " + strings.Repeat("─", 62) + "\n\n")
+		for _, o := range outputs {
+			b.WriteString(o.render(""))
+			b.WriteString("\n")
+		}
+	}
 
 	readme := "# ground — " + tool + " export\n\n" +
-		"Generated by `ground export-iac --format " + string(g.format) + "`.\n\n" +
+		"Generated by `ground export-iac --format " + string(g.format) + "` from the same\n" +
+		"CloudFormation templates `ground deploy` submits.\n\n" +
 		g.readmeCoverageTable() +
 		"\n## Apply\n\n```bash\n" + tool + " init\n" + tool + " plan\n" + tool + " apply\n```\n\n" +
-		"Set `identity_center_instance_arn` (or `TF_VAR_identity_center_instance_arn`) to create the\n" +
-		"permission sets; leaving it empty skips them.\n\n" +
+		"The org root ID and organization ID are read via the `aws_organizations_organization`\n" +
+		"data source — the same values `ground deploy` discovers through the Organizations API, so\n" +
+		"neither path asks you for them. Credentials must be for the **Organization management\n" +
+		"account**.\n\n" +
+		"Set `identity_center_instance_arn` in `ground.yaml` before exporting to include the\n" +
+		"permission sets; without it ground's own identity stack emits nothing either.\n\n" +
+		"## Regenerating\n\n" +
+		"Do not hand-edit `main.tf`. It is transpiled output: change `ground.yaml` or\n" +
+		"`internal/stack`, then re-run the export. Edits here are lost on the next export and\n" +
+		"make the two deploy paths disagree.\n\n" +
 		"The HCL uses only `hashicorp/aws ~> 5.0` and no tool-specific features, so the same file\n" +
 		"applies under both **Terraform** and **OpenTofu** — `--format terraform` and\n" +
-		"`--format opentofu` differ only in the directory name and these instructions.\n"
+		"`--format opentofu` differ only in the directory name and these instructions. Both are\n" +
+		"`fmt`-checked and `validate`-checked in CI.\n"
 
 	return g.writeFiles(map[string]string{
 		"main.tf":   b.String(),
 		"README.md": readme,
 	})
+}
+
+// emitOutputs transpiles every stack's CloudFormation Outputs into Terraform
+// output blocks. CFN cross-stack Exports have no Terraform equivalent (Terraform
+// uses remote state), so the export name is dropped and noted in a comment
+// rather than silently discarded.
+func (t *transpiler) emitOutputs(stacks []stackTemplate) ([]hclBlock, error) {
+	var out []hclBlock
+	seen := map[string]bool{}
+	for _, st := range stacks {
+		for _, name := range sortedKeys(st.template.Outputs) {
+			o, ok := st.template.Outputs[name].(map[string]any)
+			if !ok {
+				continue
+			}
+			tfOut := tfName(name)
+			if seen[tfOut] {
+				return nil, &UnsupportedError{
+					Construct: "output " + name,
+					Reason:    "two stacks produce the Terraform output name " + tfOut,
+				}
+			}
+			seen[tfOut] = true
+
+			expr, err := t.resolver.resolveValue("output "+name, o["Value"])
+			if err != nil {
+				return nil, err
+			}
+			b := hclBlock{header: fmt.Sprintf("output %q", tfOut), args: []string{arg("value", expr)}}
+			if desc, _ := o["Description"].(string); desc != "" {
+				b.args = append(b.args, arg("description", quoteHCL(desc)))
+			}
+			if exp, ok := o["Export"].(map[string]string); ok && exp["Name"] != "" {
+				b.comment = "CloudFormation exported this as " + exp["Name"] + "; Terraform has no\n" +
+					"cross-stack Export — consumers read it from this module's remote state."
+			}
+			out = append(out, b)
+		}
+	}
+	return out, nil
+}
+
+func sortedVarNames(m map[string]cfnParam) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedBoolKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // --- CDK TypeScript ----------------------------------------------------------
@@ -416,7 +580,7 @@ func (g *Generator) generateCDK(cfg *config.Config) error {
 // SPDX-License-Identifier: Apache-2.0
 // Generated by ground ` + g.version + `. Do not edit manually.
 //
-` + exportCoverage.Warning("// ") + `
+` + cdkCoverage.Warning("// ") + `
 import * as cdk from 'aws-cdk-lib';
 import * as organizations from 'aws-cdk-lib/aws-organizations';
 import * as sso from 'aws-cdk-lib/aws-sso';
