@@ -97,10 +97,34 @@ Read this before relying on ground for a compliance claim:
   `attest:boot-attested` is present — but ground does not *produce* those tags (nitro/tpm
   do). The gate is only as strong as the producer's attestation and the principal-tag
   integrity behind it.
+- **`ground export-iac` is a partial translation, not a second deploy path.** The
+  Terraform/OpenTofu/CDK exports emit the OU hierarchy and Identity Center permission
+  sets — **12 of the ~62 resources** a real deployment creates. They emit **no SCP, no
+  logging, no network, no security services**. Applying an export gives the organizational
+  *shape* with nothing enforcing anything, which is worse than deploying nothing because
+  it looks finished. Every export says so in-band (stdout banner, header in the generated
+  file, coverage table in its README). CloudFormation via `ground deploy` is the only
+  complete path.
+
+## Exporting to another toolchain
+
+`ground deploy` is CloudFormation-native. If you must hand the OU/permission-set layer to
+an existing Terraform or CDK estate, export it — and read the caveat above first:
+
+```bash
+ground export-iac --format terraform   # HCL for the terraform CLI  → ./ground-terraform/
+ground export-iac --format opentofu    # the same HCL, for tofu     → ./ground-opentofu/
+ground export-iac --format cdk         # TypeScript, CDK v2         → ./ground-cdk/
+```
+
+Writes files; deploys nothing; makes no AWS API call. The HCL uses only `hashicorp/aws
+~> 5.0` with no tool-specific features, so `terraform` and `opentofu` get byte-identical
+`main.tf` — both validated in CI. `deploy --output` is a deprecated alias.
 
 ## Status
 
-🚧 **Under active development** — initial CDK stacks being built.
+🚧 **Under active development.** The CloudFormation deploy path (logging, security,
+network, identity, accounts) is the supported one; the IaC exports are partial by design.
 
 ## Open source
 

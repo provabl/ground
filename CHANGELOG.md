@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ## [Unreleased]
 
+### Added
+
+- **`ground export-iac --format terraform|opentofu|cdk`** — the IaC export is now a
+  discoverable top-level command instead of a flag on `deploy`, and **OpenTofu is
+  explicitly supported**. It was previously reachable only as `deploy --output terraform`,
+  so `ground --help` never mentioned it, and the name implied a deploy that never happened
+  (it writes files and makes no AWS call). `--out-dir` overrides the destination. The
+  deprecated `deploy --output` still works and warns.
+- **First tests for `internal/iac`** (the package had none): every artifact carries the
+  partial-coverage warning; the missing components are named individually; `terraform` and
+  `opentofu` output is byte-identical; the generated HCL is `terraform fmt -check` clean
+  (verified by shelling out to the real binary, skipped if absent); OU names still match
+  vendor's lookup keys; and a guard that fails if the export ever starts emitting SCP,
+  CloudTrail, Config, VPC, or detection-service resources without `exportCoverage` being
+  updated to match.
+
+### Changed
+
+- **The IaC exports now state, in-band, that they are partial.** They emit the 8-OU
+  hierarchy and 4 Identity Center permission sets — **12 of the ~62 resources** a real
+  deployment creates — and **no SCPs, no logging, no network, no security services**. That
+  gap was previously undocumented anywhere: an operator could run `terraform apply` on the
+  output, get a clean apply, and reasonably believe they had a ground foundation while
+  **nothing was enforcing anything** — a worse position than deploying nothing, because it
+  looks finished. The warning now appears in three places rendered from one `iac.Coverage`
+  value (so they cannot drift): a stdout banner, a header comment inside `main.tf` /
+  `stack.ts`, and a coverage table in the generated README. ground's README trust-model
+  section records the same limit. Full coverage is tracked separately.
+- **Generated HCL is `terraform fmt`-canonical.** The output is stamped "Do not edit
+  manually" yet failed `terraform fmt -check` (misaligned `locals`, one-line `output`
+  blocks) — so an operator could neither leave it alone nor fix it, and it would fail CI in
+  any repo that checks formatting. Now verified by test under whichever of
+  `terraform`/`tofu` is present, and confirmed valid under **both**
+  (`init -backend=false` + `validate`).
+- **The generated artifacts stamp ground's real version.** `iac.NewGenerator` takes the
+  version rather than hardcoding `0.2.0` in the `ground:version` tag, which had already
+  drifted from `main.go`. Exports also carry `ground:export = hcl-partial` / `cdk-partial`,
+  so a partially-exported OU is identifiable in the console.
+
 ## [0.3.0] - 2026-07-21
 
 ### Security

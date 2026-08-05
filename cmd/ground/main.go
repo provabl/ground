@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -58,6 +59,7 @@ It makes zero compliance claims — attest makes those after 'attest scan'.
 	cmd.AddCommand(preflightCmd())
 	cmd.AddCommand(statusCmd())
 	cmd.AddCommand(exportMetadataCmd())
+	cmd.AddCommand(exportIaCCmd())
 
 	return cmd
 }
@@ -119,9 +121,14 @@ Subsequent phases (network, identity, accounts) require delegated admin setup
 specific to each institution — see ground.example.yaml for configuration.
 
 Makes zero compliance claims — run 'attest scan' after deployment for posture.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if output == "terraform" || output == "cdk" {
-				return runGenerateIaC(configPath, output)
+		RunE: func(_ *cobra.Command, _ []string) error {
+			// --output terraform|cdk never deployed anything — it wrote files.
+			// It now delegates to 'export-iac', which says so.
+			if output != "" && output != string(iac.FormatCloudFormation) {
+				fmt.Fprintf(os.Stderr,
+					"warning: 'deploy --output %s' is deprecated and generates files without deploying.\n"+
+						"         Use 'ground export-iac --format %s' instead.\n\n", output, output)
+				return runExportIaC(configPath, output, "")
 			}
 			return runDeploy(configPath, region, dryRun)
 		},
@@ -130,7 +137,8 @@ Makes zero compliance claims — run 'attest scan' after deployment for posture.
 	cmd.Flags().StringVarP(&configPath, "config", "c", "ground.yaml", "path to ground configuration file")
 	cmd.Flags().StringVar(&region, "region", "", "AWS region (overrides config)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print CloudFormation templates without deploying")
-	cmd.Flags().StringVar(&output, "output", "cloudformation", "IaC output format: cloudformation (default), terraform, cdk")
+	cmd.Flags().StringVar(&output, "output", "cloudformation", "deprecated: use 'ground export-iac --format ...'")
+	_ = cmd.Flags().MarkDeprecated("output", "use 'ground export-iac --format terraform|opentofu|cdk'")
 
 	return cmd
 }
@@ -387,41 +395,98 @@ func fetchOrgID(ctx context.Context, region string) (string, error) {
 	return *out.Organization.Id, nil
 }
 
-func runGenerateIaC(configPath, format string) error {
+func exportIaCCmd() *cobra.Command {
+	var configPath string
+	var format string
+	var outDir string
+
+	cmd := &cobra.Command{
+		Use:   "export-iac",
+		Short: "Export a PARTIAL Terraform/OpenTofu/CDK translation of the foundation",
+		Long: `Export the ground foundation as Infrastructure-as-Code for another toolchain.
+
+Writes files. Deploys nothing. Touches no AWS API.
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  THE EXPORT IS PARTIAL — IT IS NOT A COMPLETE ground FOUNDATION          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+It emits the OU hierarchy and the Identity Center permission sets. It does NOT
+emit any Service Control Policy, any logging (S3 audit bucket / org CloudTrail /
+Config recorder), any network, or any security-service enablement. Applying an
+export gives you the organizational shape with nothing enforcing anything —
+which is worse than deploying nothing, because it looks finished.
+
+Use 'ground deploy' for a real foundation. Reach for the export only when you
+must hand the OU/permission-set layer to an existing Terraform or CDK estate,
+and deploy the guardrails another way.
+
+Formats:
+  terraform   HCL for the terraform CLI
+  opentofu    the same HCL, for the tofu CLI (no tool-specific features)
+  cdk         TypeScript, CDK v2
+
+Either way ground makes zero compliance claims — run 'attest scan' for posture.`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runExportIaC(configPath, format, outDir)
+		},
+	}
+
+	cmd.Flags().StringVarP(&configPath, "config", "c", "ground.yaml", "path to ground configuration file")
+	cmd.Flags().StringVar(&format, "format", "", "output format: terraform, opentofu, or cdk (required)")
+	cmd.Flags().StringVar(&outDir, "out-dir", "", "output directory (default: ground-<format>)")
+	_ = cmd.MarkFlagRequired("format")
+
+	return cmd
+}
+
+// runExportIaC generates IaC artifacts. It is deliberately loud about what the
+// export omits: the same warning goes to stdout, into the generated artifact,
+// and into the generated README, all rendered from iac.Coverage so they cannot
+// drift apart. An operator who skims one still can't miss the gap.
+func runExportIaC(configPath, format, outDir string) error {
+	f, err := iac.ParseFormat(format)
+	if err != nil {
+		return err
+	}
+	if f == iac.FormatCloudFormation {
+		return fmt.Errorf("cloudformation is ground's own deploy path, not an export: use 'ground deploy --config %s'", configPath)
+	}
+
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-
-	var outDir string
-	switch format {
-	case "terraform":
-		outDir = "ground-terraform"
-	case "cdk":
-		outDir = "ground-cdk"
-	default:
-		return fmt.Errorf("unknown output format %q (use terraform or cdk)", format)
+	if outDir == "" {
+		outDir = iac.DefaultOutputDir(f)
 	}
 
-	g := iac.NewGenerator(iac.Format(format), outDir)
+	g := iac.NewGenerator(f, outDir, version)
 	if err := g.Generate(cfg); err != nil {
-		return fmt.Errorf("generate %s: %w", format, err)
+		return fmt.Errorf("generate %s: %w", f, err)
 	}
 
-	fmt.Printf("IaC artifacts written to ./%s/\n\n", outDir)
-	switch format {
-	case "terraform":
-		fmt.Printf("  cd %s\n", outDir)
-		fmt.Println("  terraform init")
-		fmt.Println("  terraform plan")
-		fmt.Println("  terraform apply")
+	// Don't prefix "./" — outDir may be absolute (--out-dir /tmp/x).
+	shown := outDir
+	if !filepath.IsAbs(shown) {
+		shown = "./" + shown
+	}
+	fmt.Printf("IaC artifacts written to %s/ (nothing was deployed)\n\n", shown)
+	fmt.Print(g.Coverage().Warning(""))
+	fmt.Println()
+
+	fmt.Printf("  cd %s\n", outDir)
+	if iac.IsHCL(f) {
+		tool := iac.Tool(f)
+		fmt.Printf("  %s init\n", tool)
+		fmt.Printf("  %s plan     # read the plan — it is 12 resources, not a foundation\n", tool)
+		fmt.Printf("  %s apply\n", tool)
 		fmt.Println()
-		fmt.Println("  Optional: set TF_VAR_identity_center_instance_arn for permission sets")
-	case "cdk":
-		fmt.Printf("  cd %s\n", outDir)
+		fmt.Printf("  Optional: set TF_VAR_identity_center_instance_arn for permission sets\n")
+	} else {
 		fmt.Println("  npm install")
 		fmt.Println("  npm run build")
-		fmt.Println("  cdk diff")
+		fmt.Println("  cdk diff      # read the diff — it is 12 resources, not a foundation")
 		fmt.Println("  cdk deploy")
 		fmt.Println()
 		fmt.Println("  Optional: export IDENTITY_CENTER_INSTANCE_ARN=<arn> for permission sets")
