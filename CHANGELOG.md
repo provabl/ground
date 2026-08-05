@@ -15,36 +15,79 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
   so `ground --help` never mentioned it, and the name implied a deploy that never happened
   (it writes files and makes no AWS call). `--out-dir` overrides the destination. The
   deprecated `deploy --output` still works and warns.
-- **First tests for `internal/iac`** (the package had none): every artifact carries the
-  partial-coverage warning; the missing components are named individually; `terraform` and
-  `opentofu` output is byte-identical; the generated HCL is `terraform fmt -check` clean
-  (verified by shelling out to the real binary, skipped if absent); OU names still match
-  vendor's lookup keys; and a guard that fails if the export ever starts emitting SCP,
-  CloudTrail, Config, VPC, or detection-service resources without `exportCoverage` being
-  updated to match.
+- **The Terraform/OpenTofu export is now at parity with the CloudFormation deploy path**
+  (#38). It previously emitted 12 of the ~62 resources a real deployment creates — no SCP,
+  no logging, no network — so an operator could `terraform apply` it, get a clean apply, and
+  reasonably believe they had a ground foundation while **nothing was enforcing anything**.
+  The export now covers all of it: the 8-OU hierarchy, the S3 audit bucket (KMS, versioning,
+  Object Lock, lifecycle) and its policy, the org-wide CloudTrail, the AWS Config recorder +
+  delivery channel + role, the logging-protection SCP **and its attachment to the org root**,
+  the Transit Gateway with per-tier VPCs/subnets/route tables/routes and the org-conditioned
+  VPC endpoints, and the 5 Identity Center permission sets with their managed-policy
+  attachments. 67 resources from `ground.example.yaml`; 74 with an Identity Center instance
+  ARN configured.
+
+  It closes the gap by **transpiling the same `cfn.Template` values `ground deploy` submits**
+  rather than re-declaring the foundation in a second hand-written generator. That choice is
+  the point: a hand-written generator is a second implementation of ground that has to be
+  updated in lockstep, and silently drifts when it isn't. Transpiling means a resource added
+  to `internal/stack` appears in the export automatically, and a construct the transpiler
+  cannot render faithfully is a hard `UnsupportedError` — never a skip, never a commented
+  placeholder. A partially-transpiled resource is the failure mode worth preventing: it
+  applies cleanly and leaves the operator missing exactly the property they relied on.
+
+  Structural CFN→Terraform mismatches are handled explicitly rather than approximated: the
+  S3 sub-configurations and the policy/managed-policy attachments become standalone
+  resources (the AWS provider v4+ shape), `Fn::Sub`/`Fn::GetAtt`/`Fn::Select`/`Fn::GetAZs`
+  become HCL interpolations and index expressions, `OrgRootId`/`OrgId` become
+  `aws_organizations_organization` data-source lookups — the same values `ground deploy`
+  discovers via the Organizations API, so neither path asks the operator for them — and every
+  TGW attachment carries `transit_gateway_default_route_table_association = false`, because
+  CloudFormation expresses that opt-out on the gateway while Terraform expresses it on each
+  attachment, and losing it would dissolve ground's tier isolation with a clean plan and no
+  error.
+
+  What still differs is **state ownership**, and the export says so: applying it makes your
+  tool the owner of these resources, so applying it over an org `ground deploy` already
+  created gives duplicate-name errors on the OUs and the SCP. Import first, or start from an
+  untouched org.
+- **First tests for `internal/iac`** (the package had none), built around parity rather than
+  around a promise. `TestHCL_CoversEveryStackResource` builds the same templates `ground
+  deploy` submits and asserts each resource appears in the export, so an untaught resource
+  fails the build instead of vanishing; `TestHCL_EmitsNothingTheStacksDoNot` is the converse,
+  since an export that grew a resource the deploy path lacks is just as much a divergence and
+  harder to notice. Also covered: the stack Outputs, the guardrails (including that the SCP
+  is *attached*, not merely created), TGW tier isolation, that no CloudFormation intrinsic
+  survives untranslated, and that the declared data sources are exactly those referenced.
+  Plus `terraform` and `opentofu` output byte-identical HCL that is `fmt`-clean and
+  `validate`-clean under **both** toolchains — CI runs each and fails if either check *skips*,
+  because an unenforced guarantee reads exactly like an enforced one — OU names still match
+  vendor's lookup keys (read from the accounts stack, not retyped), and every deliberately
+  dropped CFN property carries its reason.
 
 ### Changed
 
-- **The IaC exports now state, in-band, that they are partial.** They emit the 8-OU
-  hierarchy and 4 Identity Center permission sets — **12 of the ~62 resources** a real
-  deployment creates — and **no SCPs, no logging, no network, no security services**. That
-  gap was previously undocumented anywhere: an operator could run `terraform apply` on the
-  output, get a clean apply, and reasonably believe they had a ground foundation while
-  **nothing was enforcing anything** — a worse position than deploying nothing, because it
-  looks finished. The warning now appears in three places rendered from one `iac.Coverage`
-  value (so they cannot drift): a stdout banner, a header comment inside `main.tf` /
-  `stack.ts`, and a coverage table in the generated README. ground's README trust-model
-  section records the same limit. Full coverage is tracked separately.
+- **Each export now states its own coverage in-band, and the two exports say different
+  things.** The HCL export reports a complete transpile; the **CDK** export remains a
+  hand-written subset (OU hierarchy and permission sets only, no guardrails) and still warns
+  that applying it gives the organizational *shape* with nothing enforcing anything — worse
+  than deploying nothing, because it looks finished. Both statements render from one
+  `iac.Coverage` value into three places (stdout banner, header comment in `main.tf` /
+  `stack.ts`, table in the generated README) so they cannot drift. Even the complete export
+  names what *neither* path deploys: the framework SCPs and the detection services are
+  attest's, applied after `attest compile` knows which frameworks are active. ground makes
+  zero compliance claims either way — `attest scan` establishes posture.
 - **Generated HCL is `terraform fmt`-canonical.** The output is stamped "Do not edit
   manually" yet failed `terraform fmt -check` (misaligned `locals`, one-line `output`
   blocks) — so an operator could neither leave it alone nor fix it, and it would fail CI in
-  any repo that checks formatting. Now verified by test under whichever of
-  `terraform`/`tofu` is present, and confirmed valid under **both**
-  (`init -backend=false` + `validate`).
+  any repo that checks formatting. Canonicality is now structural rather than hand-padded:
+  blocks are built as values and rendered once, with `=`-alignment in a single place. Checked
+  in CI under both `terraform` and `tofu`, alongside `init -backend=false` + `validate`.
 - **The generated artifacts stamp ground's real version.** `iac.NewGenerator` takes the
   version rather than hardcoding `0.2.0` in the `ground:version` tag, which had already
-  drifted from `main.go`. Exports also carry `ground:export = hcl-partial` / `cdk-partial`,
-  so a partially-exported OU is identifiable in the console.
+  drifted from `main.go`. Exports carry `ground:export = hcl` / `cdk-partial`, so an
+  export-created OU is identifiable in the console — and distinguishable from one created by
+  the partial CDK path.
 
 ## [0.3.0] - 2026-07-21
 
