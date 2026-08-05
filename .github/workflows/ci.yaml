@@ -21,8 +21,27 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # internal/iac asserts the generated HCL is fmt-canonical by shelling out to
+      # a real binary, and SKIPS if none is present — so without this the check
+      # silently passes. terraform-wrapper is off so exec.LookPath finds the real
+      # binary. 'fmt -check'/'validate' are read-only and never contact AWS.
+      - name: Set up Terraform (for the HCL fmt check)
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
       - name: Test
         run: go test ./...
+
+      # Fail loudly if the fmt check skipped rather than ran: a silent skip means
+      # the "generated HCL is fmt-clean" guarantee isn't actually being enforced.
+      - name: Verify the HCL fmt check did not skip
+        run: |
+          go test ./internal/iac/ -run TestHCL_IsFmtClean -v | tee /tmp/fmt.log
+          if grep -q "SKIP" /tmp/fmt.log; then
+            echo "::error::TestHCL_IsFmtClean skipped — terraform/tofu missing from the runner"
+            exit 1
+          fi
 
       - name: Vet
         run: go vet ./...
