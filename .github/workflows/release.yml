@@ -57,7 +57,7 @@ jobs:
             BINARY="dist/ground-${VERSION}-${GOOS}-${GOARCH}"
             go build \
               -trimpath \
-              -ldflags="-s -w -X main.version=${VERSION}" \
+              -ldflags="-s -w -X github.com/provabl/ground/internal/version.Version=${VERSION}" \
               -o "${BINARY}" \
               ./cmd/ground
             echo "${BINARY}" >> binaries.txt

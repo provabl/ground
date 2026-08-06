@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+
+	"github.com/provabl/ground/internal/version"
 )
 
 // Template is a CloudFormation template document.
@@ -118,4 +120,27 @@ func DependsOn(resource map[string]any, deps ...string) map[string]any {
 // Tag builds a CloudFormation tag map.
 func Tag(key, value string) map[string]string {
 	return map[string]string{"Key": key, "Value": value}
+}
+
+// ManagedTags returns the tags every ground-created resource carries, plus any
+// extra tags the caller supplies.
+//
+// It takes the extras rather than being appended to. The pattern it replaces —
+// building a shared managedTags slice and calling append(managedTags, ...) per
+// resource — is an aliasing bug waiting for someone to change the literal's
+// length: once the shared slice has spare capacity, each append writes into the
+// same backing array and the resources overwrite each other's tags. Passing the
+// extras in means every call allocates its own.
+//
+// The version comes from [version.Version], not a literal. Two stacks used to
+// hardcode it, both said 0.2.0 long after ground shipped 0.3.0, and every OU and
+// permission set they created was tagged with a version that never deployed it
+// (#42).
+func ManagedTags(extra ...map[string]string) []map[string]string {
+	tags := make([]map[string]string, 0, len(extra)+2)
+	tags = append(tags,
+		Tag("managed-by", "ground"),
+		Tag("ground:version", version.Version),
+	)
+	return append(tags, extra...)
 }

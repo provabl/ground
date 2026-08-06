@@ -97,7 +97,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"Type":        "SERVICE_CONTROL_POLICY",
 				"Content":     string(scpJSON),
 				"TargetIds":   []any{map[string]string{"Ref": "OrgRootId"}},
-				"Tags":        []map[string]string{cfn.Tag("managed-by", "ground")},
+				"Tags":        cfn.ManagedTags(),
 			}),
 		},
 		Outputs: map[string]any{

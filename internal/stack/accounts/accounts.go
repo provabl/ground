@@ -41,11 +41,6 @@ func (s *Stack) StackName() string { return "ground-accounts" }
 // ground deploy auto-populates this from the Organizations API, and
 // operators can also pass it explicitly with --org-root-id.
 func (s *Stack) Template() (*cfn.Template, error) {
-	managedTags := []map[string]string{
-		cfn.Tag("managed-by", "ground"),
-		cfn.Tag("ground:version", "0.2.0"),
-	}
-
 	// Use the management account ID from config as the default, but the
 	// root ID comes from the deployment context (injected by runDeploy).
 	rootIDRef := map[string]string{"Ref": "OrgRootId"}
@@ -68,31 +63,31 @@ func (s *Stack) Template() (*cfn.Template, error) {
 			"SecurityOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "Security",
 				"ParentId": rootIDRef,
-				"Tags":     append(managedTags, cfn.Tag("ground:tier", "security")),
+				"Tags":     cfn.ManagedTags(cfn.Tag("ground:tier", "security")),
 			}),
 
 			"InfrastructureOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "Infrastructure",
 				"ParentId": rootIDRef,
-				"Tags":     append(managedTags, cfn.Tag("ground:tier", "infrastructure")),
+				"Tags":     cfn.ManagedTags(cfn.Tag("ground:tier", "infrastructure")),
 			}),
 
 			"ResearchOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "Research",
 				"ParentId": rootIDRef,
-				"Tags":     append(managedTags, cfn.Tag("ground:tier", "research")),
+				"Tags":     cfn.ManagedTags(cfn.Tag("ground:tier", "research")),
 			}),
 
 			"SensitiveResearchOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "SensitiveResearch",
 				"ParentId": rootIDRef,
-				"Tags":     append(managedTags, cfn.Tag("ground:tier", "sensitive")),
+				"Tags":     cfn.ManagedTags(cfn.Tag("ground:tier", "sensitive")),
 			}),
 
 			"DoDCMMCOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "DoD-CMMC",
 				"ParentId": rootIDRef,
-				"Tags":     append(managedTags, cfn.Tag("ground:tier", "dod")),
+				"Tags":     cfn.ManagedTags(cfn.Tag("ground:tier", "dod")),
 			}),
 
 			// ── Sensitive Research sub-OUs ─────────────────────────────────────
@@ -105,7 +100,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 			"NIHGenomicOU": cfn.DependsOn(cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "NIHGenomic",
 				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
-				"Tags": append(managedTags,
+				"Tags": cfn.ManagedTags(
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "genomic"),
 					cfn.Tag("attest:data-classes", "CUI,GENOMIC")),
@@ -114,7 +109,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 			"HIPAAResearchOU": cfn.DependsOn(cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "HIPAAResearch",
 				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
-				"Tags": append(managedTags,
+				"Tags": cfn.ManagedTags(
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "phi"),
 					cfn.Tag("attest:data-classes", "PHI")),
@@ -123,7 +118,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 			"CUIResearchOU": cfn.DependsOn(cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "CUIResearch",
 				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
-				"Tags": append(managedTags,
+				"Tags": cfn.ManagedTags(
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "cui"),
 					cfn.Tag("attest:data-classes", "CUI")),

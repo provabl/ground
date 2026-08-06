@@ -79,10 +79,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 						}},
 					}},
 				},
-				"Tags": []map[string]string{
-					cfn.Tag("managed-by", "ground"),
-					cfn.Tag("ground:purpose", "audit-logging"),
-				},
+				"Tags": cfn.ManagedTags(cfn.Tag("ground:purpose", "audit-logging")),
 			}),
 
 			"AuditBucketPolicy": cfn.Resource("AWS::S3::BucketPolicy", map[string]any{
@@ -148,7 +145,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 						{"Type": "AWS::S3::Object", "Values": []string{"arn:aws:s3"}},
 					},
 				}},
-				"Tags": []map[string]string{cfn.Tag("managed-by", "ground")},
+				"Tags": cfn.ManagedTags(),
 			}), "AuditBucketPolicy"),
 
 			// ── AWS Config recorder ───────────────────────────────────────────

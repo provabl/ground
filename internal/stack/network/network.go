@@ -87,19 +87,13 @@ func (s *Stack) singleVPCTemplate(supernet string) (*cfn.Template, error) {
 			"CidrBlock":          vpc.CIDR.String(),
 			"EnableDnsSupport":   true,
 			"EnableDnsHostnames": true,
-			"Tags": []map[string]string{
-				cfn.Tag("Name", "ground-vpc"),
-				cfn.Tag("managed-by", "ground"),
-			},
+			"Tags":               cfn.ManagedTags(cfn.Tag("Name", "ground-vpc")),
 		}),
 		// Private-only by design: no Internet Gateway. Egress to AWS services is via
 		// endpoints; egress to external research endpoints is step 4 (ground#10).
 		"PrivateRouteTable": cfn.Resource("AWS::EC2::RouteTable", map[string]any{
 			"VpcId": ref("VPC"),
-			"Tags": []map[string]string{
-				cfn.Tag("Name", "ground-private"),
-				cfn.Tag("managed-by", "ground"),
-			},
+			"Tags":  cfn.ManagedTags(cfn.Tag("Name", "ground-private")),
 		}),
 	}
 
@@ -115,10 +109,7 @@ func (s *Stack) singleVPCTemplate(supernet string) (*cfn.Template, error) {
 				"Fn::Select": []any{az, map[string]any{"Fn::GetAZs": ""}},
 			},
 			"MapPublicIpOnLaunch": false,
-			"Tags": []map[string]string{
-				cfn.Tag("Name", fmt.Sprintf("ground-private-%d", az+1)),
-				cfn.Tag("managed-by", "ground"),
-			},
+			"Tags":                cfn.ManagedTags(cfn.Tag("Name", fmt.Sprintf("ground-private-%d", az+1))),
 		})
 		resources[name+"RTAssoc"] = cfn.Resource("AWS::EC2::SubnetRouteTableAssociation", map[string]any{
 			"SubnetId":     ref(name),
@@ -231,10 +222,7 @@ func (s *Stack) hubSpokeTemplate(supernet string, tiers []string) (*cfn.Template
 			// (which would defeat tier isolation).
 			"DefaultRouteTableAssociation": "disable",
 			"DefaultRouteTablePropagation": "disable",
-			"Tags": []map[string]string{
-				cfn.Tag("Name", "ground-tgw"),
-				cfn.Tag("managed-by", "ground"),
-			},
+			"Tags":                         cfn.ManagedTags(cfn.Tag("Name", "ground-tgw")),
 		}),
 	}
 	outputs := map[string]any{}
@@ -428,17 +416,11 @@ func (s *Stack) addVPC(resources map[string]any, prefix string, alloc VPCAlloc, 
 		"CidrBlock":          alloc.CIDR.String(),
 		"EnableDnsSupport":   true,
 		"EnableDnsHostnames": true,
-		"Tags": []map[string]string{
-			cfn.Tag("Name", "ground-"+strings.ToLower(prefix)),
-			cfn.Tag("managed-by", "ground"),
-		},
+		"Tags":               cfn.ManagedTags(cfn.Tag("Name", "ground-"+strings.ToLower(prefix))),
 	})
 	resources[rtID] = cfn.Resource("AWS::EC2::RouteTable", map[string]any{
 		"VpcId": ref(vpcID),
-		"Tags": []map[string]string{
-			cfn.Tag("Name", "ground-"+strings.ToLower(prefix)+"-private"),
-			cfn.Tag("managed-by", "ground"),
-		},
+		"Tags":  cfn.ManagedTags(cfn.Tag("Name", "ground-"+strings.ToLower(prefix)+"-private")),
 	})
 
 	ids := vpcLogicalIDs{vpc: vpcID, routeTable: rtID}
@@ -452,10 +434,7 @@ func (s *Stack) addVPC(resources map[string]any, prefix string, alloc VPCAlloc, 
 				"Fn::Select": []any{az, map[string]any{"Fn::GetAZs": ""}},
 			},
 			"MapPublicIpOnLaunch": false,
-			"Tags": []map[string]string{
-				cfn.Tag("Name", fmt.Sprintf("ground-%s-private-%d", strings.ToLower(prefix), az+1)),
-				cfn.Tag("managed-by", "ground"),
-			},
+			"Tags":                cfn.ManagedTags(cfn.Tag("Name", fmt.Sprintf("ground-%s-private-%d", strings.ToLower(prefix), az+1))),
 		})
 		resources[sid+"RTAssoc"] = cfn.Resource("AWS::EC2::SubnetRouteTableAssociation", map[string]any{
 			"SubnetId":     ref(sid),
@@ -500,10 +479,7 @@ func addTGWAttachment(resources map[string]any, prefix string, ids vpcLogicalIDs
 		"TransitGatewayId": ref("TransitGateway"),
 		"VpcId":            ref(ids.vpc),
 		"SubnetIds":        subnetRefs,
-		"Tags": []map[string]string{
-			cfn.Tag("Name", "ground-tgw-attach-"+strings.ToLower(prefix)),
-			cfn.Tag("managed-by", "ground"),
-		},
+		"Tags":             cfn.ManagedTags(cfn.Tag("Name", "ground-tgw-attach-"+strings.ToLower(prefix))),
 	})
 }
 
@@ -511,10 +487,7 @@ func addTGWAttachment(resources map[string]any, prefix string, ids vpcLogicalIDs
 func tgwRouteTable(prefix string) map[string]any {
 	return cfn.Resource("AWS::EC2::TransitGatewayRouteTable", map[string]any{
 		"TransitGatewayId": ref("TransitGateway"),
-		"Tags": []map[string]string{
-			cfn.Tag("Name", "ground-tgw-rt-"+strings.ToLower(prefix)),
-			cfn.Tag("managed-by", "ground"),
-		},
+		"Tags":             cfn.ManagedTags(cfn.Tag("Name", "ground-tgw-rt-"+strings.ToLower(prefix))),
 	})
 }
 
