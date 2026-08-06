@@ -76,6 +76,36 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ### Fixed
 
+- **`ground:version` was a hardcoded `0.2.0`, so every OU and permission set was tagged with
+  a version that never deployed it** (#42). Two stacks stamped the literal (`accounts`,
+  `identity`) and both still said `0.2.0` after ground shipped 0.3.0. The tag exists to answer
+  "which ground built this?" — the question you ask when a resource looks wrong and you need
+  to know whether a known-bad release created it — so a wrong value is *worse* than an absent
+  one: absent prompts you to look elsewhere, wrong sends you to the wrong release.
+
+  The literal in `cmd/ground` was the same bug one level up (`ground --version` reported
+  `0.2.0` too), and it was the one that actually reached the export, which hoists the version
+  it is handed into `local.managed_tags`. So the version now has exactly one home,
+  `internal/version.Version`, injected at link time by the release workflow and defaulting to
+  `"dev"` — an un-injected build says something true rather than claiming to be a release that
+  shipped different code.
+
+  A new `cfn.ManagedTags(extra...)` is the only way to build the shared tags, so a stack
+  cannot reintroduce a literal without deleting the call. It also takes its extras as
+  arguments instead of being appended to, which removes an aliasing hazard the old pattern
+  carried: a shared `managedTags` slice plus `append(managedTags, ...)` per resource silently
+  writes every resource's extra tag into the same backing array as soon as that literal has
+  spare capacity.
+
+  While in there, the `logging`, `security`, and `network` stacks were using bare `managed-by`
+  tags with **no version at all** — 25 resources that couldn't answer the question either.
+  All 33 tagged resources now carry the build version.
+
+  Tests assert the tag equals `version.Version` rather than any fixed string, which is what
+  catches a literal that is merely *stale* — the only way this bug appears — with a count
+  floor so it can't vacuously pass if the tag stops being applied. Note the tag is written at
+  *create* time and CloudFormation won't rewrite it on a resource it isn't otherwise updating,
+  so **existing deployments keep the stale value**; there is no migration.
 - **Five deploy-ordering constraints were declared where CloudFormation never reads them**
   (#41). `DependsOn` is a *resource-level* attribute — a sibling of `Type` and `Properties` —
   but five resources declared it *inside* `Properties`. That is not a schema violation
@@ -124,10 +154,10 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
   blocks are built as values and rendered once, with `=`-alignment in a single place. Checked
   in CI under both `terraform` and `tofu`, alongside `init -backend=false` + `validate`.
 - **The generated artifacts stamp ground's real version.** `iac.NewGenerator` takes the
-  version rather than hardcoding `0.2.0` in the `ground:version` tag, which had already
-  drifted from `main.go`. Exports carry `ground:export = hcl` / `cdk-partial`, so an
-  export-created OU is identifiable in the console — and distinguishable from one created by
-  the partial CDK path.
+  version rather than hardcoding `0.2.0` in the `ground:version` tag. (The value it was handed
+  was itself a stale literal until #42, above, gave the version one home.) Exports carry
+  `ground:export = hcl` / `cdk-partial`, so an export-created OU is identifiable in the
+  console — and distinguishable from one created by the partial CDK path.
 
 ## [0.3.0] - 2026-07-21
 

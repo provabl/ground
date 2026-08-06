@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/provabl/ground/internal/version"
 )
 
 // DependsOn is a resource-level attribute. Inside Properties it is not a schema
@@ -132,5 +134,52 @@ func TestValidate_RejectsNonObjectResource(t *testing.T) {
 func TestTag(t *testing.T) {
 	if got := Tag("k", "v"); got["Key"] != "k" || got["Value"] != "v" {
 		t.Errorf("Tag(k, v) = %#v", got)
+	}
+}
+
+// ground:version must come from the build, never a literal. Two stacks hardcoded
+// it and both still said 0.2.0 after ground shipped 0.3.0, so every OU and
+// permission set carried a version that never deployed it (#42). A wrong answer
+// is worse than none: absent sends you looking elsewhere, wrong sends you to the
+// wrong release.
+func TestManagedTags_StampsTheBuildVersion(t *testing.T) {
+	got := map[string]string{}
+	for _, tag := range ManagedTags() {
+		got[tag["Key"]] = tag["Value"]
+	}
+	if got["managed-by"] != "ground" {
+		t.Errorf("managed-by = %q, want ground", got["managed-by"])
+	}
+	if got["ground:version"] != version.Version {
+		t.Errorf("ground:version = %q, want the build version %q", got["ground:version"], version.Version)
+	}
+	// A version-shaped literal would pass the check above only if it happened to
+	// equal the default, so pin the default too: an un-injected build says "dev",
+	// which is true, rather than claiming to be a release.
+	if version.Version == "" {
+		t.Error("the default version must not be empty")
+	}
+}
+
+// The extras are passed in rather than appended to a shared slice on purpose.
+// The pattern this replaced — one managedTags literal per stack, append(managedTags,
+// extra) per resource — silently aliases the moment the literal has spare capacity:
+// every resource writes its extra into the same backing array and they overwrite
+// each other. Two calls must not be able to see each other's tags.
+func TestManagedTags_CallsDoNotShareBacking(t *testing.T) {
+	first := ManagedTags(Tag("ground:tier", "security"))
+	second := ManagedTags(Tag("ground:tier", "research"))
+
+	if first[len(first)-1]["Value"] != "security" {
+		t.Errorf("the second call overwrote the first call's tags: %#v", first)
+	}
+	if second[len(second)-1]["Value"] != "research" {
+		t.Errorf("second call = %#v", second)
+	}
+
+	// And mutating one result must not reach the other.
+	first[0]["Value"] = "tampered"
+	if second[0]["Value"] != "ground" {
+		t.Error("the base tags are shared between calls")
 	}
 }
