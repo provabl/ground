@@ -5,7 +5,11 @@
 // Templates are represented as plain Go maps and serialized to JSON for deployment.
 package cfn
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+)
 
 // Template is a CloudFormation template document.
 type Template struct {
@@ -17,12 +21,68 @@ type Template struct {
 }
 
 // JSON serialises the template to a CloudFormation-compatible JSON string.
+//
+// It validates first, so a template CloudFormation would silently misinterpret
+// never reaches a deployment. See [Template.Validate].
 func (t *Template) JSON() (string, error) {
+	if err := t.Validate(); err != nil {
+		return "", err
+	}
 	b, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// Validate rejects templates CloudFormation would accept but misinterpret.
+//
+// The case it exists for: DependsOn is a *resource-level* attribute, a sibling of
+// Type and Properties. Put inside Properties it is not a schema violation
+// CloudFormation rejects — it simply is not read, so the declared ordering is
+// silently ignored and the stack deploys in whatever order the implicit
+// dependencies imply. Five of ground's resources shipped that way (#41), and
+// nothing caught it because the deploy succeeded.
+//
+// So: a reserved resource-level key found inside Properties is an error, not a
+// warning. Anything that can be wrong silently should be impossible instead.
+func (t *Template) Validate() error {
+	// The resource-level attributes worth guarding: each changes deploy behaviour
+	// and each is silently inert inside Properties. Only the top level of
+	// Properties is inspected — "Condition" nested inside an IAM policy statement
+	// is a policy condition and entirely correct. If some resource type ever has a
+	// legitimate top-level property with one of these names, remove it from this
+	// list rather than working around the error.
+	reserved := []string{"DependsOn", "Condition", "DeletionPolicy", "UpdateReplacePolicy", "Metadata"}
+
+	for _, logicalID := range sortedKeys(t.Resources) {
+		res, ok := t.Resources[logicalID].(map[string]any)
+		if !ok {
+			return fmt.Errorf("resource %s is not an object", logicalID)
+		}
+		props, ok := res["Properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, key := range reserved {
+			if _, misplaced := props[key]; misplaced {
+				return fmt.Errorf("resource %s: %q is inside Properties, where CloudFormation "+
+					"ignores it — it is a resource-level attribute (a sibling of Type and Properties). "+
+					"Use cfn.Resource(...) with cfn.DependsOn or set it on the resource entry directly",
+					logicalID, key)
+			}
+		}
+	}
+	return nil
+}
+
+func sortedKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Resource builds a CloudFormation resource entry.
@@ -31,6 +91,28 @@ func Resource(resourceType string, properties map[string]any) map[string]any {
 		"Type":       resourceType,
 		"Properties": properties,
 	}
+}
+
+// DependsOn sets a resource's explicit creation-order dependencies.
+//
+// It exists because the obvious-looking thing — adding "DependsOn" to the map
+// passed to [Resource] — puts it inside Properties, where CloudFormation ignores
+// it. Chain it onto Resource:
+//
+//	cfn.DependsOn(cfn.Resource("AWS::CloudTrail::Trail", props), "AuditBucketPolicy")
+//
+// A single dependency is rendered as a string and several as a list, matching
+// what CloudFormation's own documentation shows.
+func DependsOn(resource map[string]any, deps ...string) map[string]any {
+	switch len(deps) {
+	case 0:
+		return resource
+	case 1:
+		resource["DependsOn"] = deps[0]
+	default:
+		resource["DependsOn"] = deps
+	}
+	return resource
 }
 
 // Tag builds a CloudFormation tag map.

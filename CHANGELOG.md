@@ -65,6 +65,37 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
   vendor's lookup keys (read from the accounts stack, not retyped), and every deliberately
   dropped CFN property carries its reason.
 
+### Fixed
+
+- **Five deploy-ordering constraints were declared where CloudFormation never reads them**
+  (#41). `DependsOn` is a *resource-level* attribute — a sibling of `Type` and `Properties` —
+  but five resources declared it *inside* `Properties`. That is not a schema violation
+  CloudFormation rejects; it is simply not read, so the stack deployed successfully in
+  whatever order the implicit `Ref` dependencies happened to imply and the declared ordering
+  did nothing. Two of the five were guarding real failures: `OrgTrail` → `AuditBucketPolicy`
+  (`CreateTrail` validates its S3 destination and fails unless the policy already grants
+  `cloudtrail.amazonaws.com s3:PutObject`, and the trail `Ref`s the *bucket*, not its policy)
+  and `ConfigDeliveryChannel` → `ConfigRecorder` (`PutDeliveryChannel` fails when no recorder
+  exists, and nothing in that resource references it, so CloudFormation was free to create
+  them concurrently). The three `SensitiveResearch` sub-OUs were ordered correctly anyway —
+  they `Ref` the parent for `ParentId` — but are now stated properly too, since vendor
+  resolves them by name through the nested tree.
+
+  Fixed at the root rather than only at the five call sites: `cfn.Template.Validate` rejects
+  any resource-level attribute (`DependsOn`, `Condition`, `DeletionPolicy`,
+  `UpdateReplacePolicy`, `Metadata`) found at the top level of `Properties`, and `JSON` — the
+  only path to CloudFormation — validates before serialising, so a template CloudFormation
+  would misinterpret cannot reach a deployment. A new `cfn.DependsOn` helper makes the correct
+  placement the easy one, rendering a single dependency as a string and several as a list.
+  An error rather than a lint warning on purpose: anything that can be wrong *silently* should
+  be impossible instead. First tests for `internal/cfn` (the package had none) cover the
+  guard, the helper's shape, and the attribute's placement in the serialised JSON;
+  `TestStackTemplates_PassTheCloudFormationGuard` checks every template the deploy path
+  submits, in both the full and minimal configurations. `deploy --dry-run` now reports a
+  serialisation failure instead of discarding it and printing an empty stack body. The
+  generated HCL is byte-identical across the fix, because the transpiler already read
+  `DependsOn` from both positions.
+
 ### Changed
 
 - **Each export now states its own coverage in-band, and the two exports say different

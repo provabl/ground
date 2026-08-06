@@ -96,35 +96,38 @@ func (s *Stack) Template() (*cfn.Template, error) {
 			}),
 
 			// ── Sensitive Research sub-OUs ─────────────────────────────────────
-			"NIHGenomicOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
+			//
+			// The explicit DependsOn is belt-and-braces: each sub-OU Refs
+			// SensitiveResearchOU for its ParentId, which already makes CloudFormation
+			// order it after the parent. Kept because the ordering is load-bearing —
+			// vendor resolves these by name through the nested tree — and stating it
+			// costs nothing.
+			"NIHGenomicOU": cfn.DependsOn(cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "NIHGenomic",
 				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
 				"Tags": append(managedTags,
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "genomic"),
 					cfn.Tag("attest:data-classes", "CUI,GENOMIC")),
-				"DependsOn": "SensitiveResearchOU",
-			}),
+			}), "SensitiveResearchOU"),
 
-			"HIPAAResearchOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
+			"HIPAAResearchOU": cfn.DependsOn(cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "HIPAAResearch",
 				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
 				"Tags": append(managedTags,
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "phi"),
 					cfn.Tag("attest:data-classes", "PHI")),
-				"DependsOn": "SensitiveResearchOU",
-			}),
+			}), "SensitiveResearchOU"),
 
-			"CUIResearchOU": cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
+			"CUIResearchOU": cfn.DependsOn(cfn.Resource("AWS::Organizations::OrganizationalUnit", map[string]any{
 				"Name":     "CUIResearch",
 				"ParentId": map[string]string{"Ref": "SensitiveResearchOU"},
 				"Tags": append(managedTags,
 					cfn.Tag("ground:tier", "sensitive"),
 					cfn.Tag("ground:data-scope", "cui"),
 					cfn.Tag("attest:data-classes", "CUI")),
-				"DependsOn": "SensitiveResearchOU",
-			}),
+			}), "SensitiveResearchOU"),
 		},
 
 		Outputs: map[string]any{

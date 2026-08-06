@@ -128,7 +128,12 @@ func (s *Stack) Template() (*cfn.Template, error) {
 			}),
 
 			// ── CloudTrail (org-wide) ─────────────────────────────────────────
-			"OrgTrail": cfn.Resource("AWS::CloudTrail::Trail", map[string]any{
+			//
+			// The trail depends on the bucket policy explicitly: CreateTrail validates
+			// the destination and fails unless the policy already grants
+			// cloudtrail.amazonaws.com s3:PutObject. The implicit dependency (the trail
+			// Refs the bucket) orders the trail after the *bucket*, not after its policy.
+			"OrgTrail": cfn.DependsOn(cfn.Resource("AWS::CloudTrail::Trail", map[string]any{
 				"TrailName":                  "ground-org-trail",
 				"S3BucketName":               map[string]string{"Ref": "AuditBucket"},
 				"IsLogging":                  true,
@@ -143,9 +148,8 @@ func (s *Stack) Template() (*cfn.Template, error) {
 						{"Type": "AWS::S3::Object", "Values": []string{"arn:aws:s3"}},
 					},
 				}},
-				"Tags":      []map[string]string{cfn.Tag("managed-by", "ground")},
-				"DependsOn": "AuditBucketPolicy",
-			}),
+				"Tags": []map[string]string{cfn.Tag("managed-by", "ground")},
+			}), "AuditBucketPolicy"),
 
 			// ── AWS Config recorder ───────────────────────────────────────────
 			"ConfigRole": cfn.Resource("AWS::IAM::Role", map[string]any{
@@ -172,14 +176,16 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"RoleARN": map[string]any{"Fn::GetAtt": []string{"ConfigRole", "Arn"}},
 			}),
 
-			"ConfigDeliveryChannel": cfn.Resource("AWS::Config::DeliveryChannel", map[string]any{
+			// PutDeliveryChannel fails if no configuration recorder exists yet, and
+			// nothing in this resource references the recorder — so without the explicit
+			// dependency CloudFormation is free to create them concurrently.
+			"ConfigDeliveryChannel": cfn.DependsOn(cfn.Resource("AWS::Config::DeliveryChannel", map[string]any{
 				"Name":         "ground-config-delivery",
 				"S3BucketName": map[string]string{"Ref": "AuditBucket"},
 				"ConfigSnapshotDeliveryProperties": map[string]string{
 					"DeliveryFrequency": "TwentyFour_Hours",
 				},
-				"DependsOn": "ConfigRecorder",
-			}),
+			}), "ConfigRecorder"),
 		},
 
 		Outputs: map[string]any{
