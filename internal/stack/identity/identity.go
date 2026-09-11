@@ -58,11 +58,6 @@ func (s *Stack) Template() (*cfn.Template, error) {
 		}, nil
 	}
 
-	managedTags := []map[string]string{
-		cfn.Tag("managed-by", "ground"),
-		cfn.Tag("ground:version", "0.2.0"),
-	}
-
 	instanceARN := s.cfg.InstanceARN
 
 	return &cfn.Template{
@@ -77,7 +72,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"Name":            RoleUser,
 				"Description":     "Standard user access — Research OU. MFA required.",
 				"SessionDuration": "PT1H",
-				"Tags":            append(managedTags, cfn.Tag("ground:role-tier", "standard")),
+				"Tags":            cfn.ManagedTags(cfn.Tag("ground:role-tier", "standard")),
 			}),
 
 			// Sensitive user — Sensitive Research OU. FIDO2/WebAuthn required.
@@ -87,7 +82,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"Name":            RoleSensitiveUser,
 				"Description":     "Sensitive Research OU — FIDO2/WebAuthn MFA required. 1-hour session. Per NIST 800-171 §3.5.3.",
 				"SessionDuration": "PT1H",
-				"Tags":            append(managedTags, cfn.Tag("ground:role-tier", "sensitive")),
+				"Tags":            cfn.ManagedTags(cfn.Tag("ground:role-tier", "sensitive")),
 			}),
 
 			// SRE admin — all OUs. Phishing-resistant MFA. Full access with audit logging.
@@ -97,7 +92,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"Description":     "SRE administrator — phishing-resistant MFA, all sessions logged to CloudTrail.",
 				"SessionDuration": "PT1H",
 				"ManagedPolicies": []string{"arn:aws:iam::aws:policy/AdministratorAccess"},
-				"Tags":            append(managedTags, cfn.Tag("ground:role-tier", "admin")),
+				"Tags":            cfn.ManagedTags(cfn.Tag("ground:role-tier", "admin")),
 			}),
 
 			// Compliance officer — read + compliance tooling access.
@@ -106,7 +101,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"Name":            RoleComplianceOfficer,
 				"Description":     "Compliance officer — attest + compliance tooling. 4-hour session.",
 				"SessionDuration": "PT4H",
-				"Tags":            append(managedTags, cfn.Tag("ground:role-tier", "compliance")),
+				"Tags":            cfn.ManagedTags(cfn.Tag("ground:role-tier", "compliance")),
 			}),
 
 			// Auditor — read-only. 8-hour session.
@@ -116,7 +111,7 @@ func (s *Stack) Template() (*cfn.Template, error) {
 				"Description":     "Read-only auditor — 8-hour session, MFA required.",
 				"SessionDuration": "PT8H",
 				"ManagedPolicies": []string{"arn:aws:iam::aws:policy/ReadOnlyAccess"},
-				"Tags":            append(managedTags, cfn.Tag("ground:role-tier", "auditor")),
+				"Tags":            cfn.ManagedTags(cfn.Tag("ground:role-tier", "auditor")),
 			}),
 		},
 

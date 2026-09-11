@@ -18,6 +18,7 @@ import (
 	"github.com/provabl/ground/internal/config"
 	"github.com/provabl/ground/internal/stack/accounts"
 	"github.com/provabl/ground/internal/stack/logging"
+	"github.com/provabl/ground/internal/version"
 )
 
 // testConfig exercises every stack: without a Transit Gateway, endpoints, and an
@@ -755,6 +756,56 @@ func TestHCL_MinimalConfigExportsWithoutOptionalStacks(t *testing.T) {
 		if !strings.Contains(tf, want) {
 			t.Errorf("minimal export is missing %s", want)
 		}
+	}
+}
+
+// No stack may stamp a literal into ground:version (#42). Two of them did, both
+// said 0.2.0 long after ground shipped 0.3.0, and every OU and permission set
+// they created carried a version that never deployed it. The tag answers "which
+// ground built this?" — the question you ask when a resource looks wrong and you
+// need to know whether a known-bad release created it — so a wrong value is worse
+// than an absent one.
+//
+// Asserting against version.Version rather than a fixed string is the point: this
+// fails for a literal that is merely *stale*, which is the only way the bug ever
+// appears. A hardcoded "0.2.0" cannot pass while the build says anything else.
+func TestStackTemplates_StampTheBuildVersion(t *testing.T) {
+	stacks, err := hclStacks(testConfig())
+	if err != nil {
+		t.Fatalf("hclStacks: %v", err)
+	}
+
+	tagged := 0
+	for _, st := range stacks {
+		for logicalID, raw := range st.template.Resources {
+			res, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			props, ok := res["Properties"].(map[string]any)
+			if !ok {
+				continue
+			}
+			pairs, err := tagPairs(props["Tags"])
+			if err != nil {
+				continue // resource types whose tags are not a CFN tag list
+			}
+			got, present := pairs["ground:version"]
+			if !present {
+				continue
+			}
+			tagged++
+			if got != version.Version {
+				t.Errorf("%s in %q: ground:version = %q, want the build version %q",
+					logicalID, st.title, got, version.Version)
+			}
+		}
+	}
+
+	// Guard the guard: if the tag stopped being applied, every check above would
+	// vacuously pass. The OU hierarchy and the permission sets alone are 13.
+	if tagged < 13 {
+		t.Errorf("only %d resources carry ground:version — the tag is barely applied", tagged)
 	}
 }
 

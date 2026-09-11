@@ -26,9 +26,8 @@ import (
 	"github.com/provabl/ground/internal/stack/logging"
 	"github.com/provabl/ground/internal/stack/network"
 	"github.com/provabl/ground/internal/stack/security"
+	"github.com/provabl/ground/internal/version"
 )
-
-var version = "0.2.0"
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {
@@ -51,7 +50,7 @@ It makes zero compliance claims — attest makes those after 'attest scan'.
   attest compile --scp-strategy merged  # compile policies from frameworks
   attest apply --approve                # deploy policies to the org
   attest scan                           # NOW we can make compliance claims`,
-		Version: version,
+		Version: version.Version,
 	}
 
 	cmd.AddCommand(deployCmd())
@@ -177,7 +176,7 @@ func statusCmd() *cobra.Command {
 }
 
 func runDeploy(configPath, region string, dryRun bool) error {
-	fmt.Fprintf(os.Stderr, "ground v%s\n\n", version)
+	fmt.Fprintf(os.Stderr, "ground %s\n\n", version.Version)
 
 	cfg, err := loadConfig(configPath)
 	if err != nil {
@@ -469,7 +468,7 @@ func runExportIaC(configPath, format, outDir string) error {
 		outDir = iac.DefaultOutputDir(f)
 	}
 
-	g := iac.NewGenerator(f, outDir, version)
+	g := iac.NewGenerator(f, outDir, version.Version)
 	if err := g.Generate(cfg); err != nil {
 		return fmt.Errorf("generate %s: %w", f, err)
 	}
@@ -561,7 +560,7 @@ func runExportMetadata(region, configPath, outputPath string) error {
 	}
 
 	meta := GroundMeta{
-		GroundVersion: version,
+		GroundVersion: version.Version,
 		Region:        region,
 	}
 
