@@ -17,6 +17,7 @@ import (
 	"github.com/provabl/ground/internal/cfn"
 	"github.com/provabl/ground/internal/config"
 	"github.com/provabl/ground/internal/stack/accounts"
+	"github.com/provabl/ground/internal/stack/logging"
 )
 
 // testConfig exercises every stack: without a Transit Gateway, endpoints, and an
@@ -753,6 +754,62 @@ func TestHCL_MinimalConfigExportsWithoutOptionalStacks(t *testing.T) {
 	for _, want := range []string{`resource "aws_organizations_policy_attachment"`, `resource "aws_cloudtrail"`} {
 		if !strings.Contains(tf, want) {
 			t.Errorf("minimal export is missing %s", want)
+		}
+	}
+}
+
+// Every stack's template must survive cfn.Validate — a resource-level attribute
+// declared inside Properties is silently ignored by CloudFormation, so the deploy
+// succeeds and the ordering it promised never happens (#41).
+//
+// This lives here rather than as five near-identical per-stack tests because
+// hclStacks already builds exactly the set `ground deploy` submits: a stack added
+// to the deploy path gets checked the moment it is added to the export.
+func TestStackTemplates_PassTheCloudFormationGuard(t *testing.T) {
+	minimal := &config.Config{}
+	minimal.Org.Name = "T"
+	minimal.Org.Region = "us-west-2"
+	minimal.Org.ManagementID = "123456789012"
+
+	// Both configurations: the optional stacks emit different resources when off,
+	// and a misplaced attribute in either branch is the same bug.
+	for name, cfg := range map[string]*config.Config{"full": testConfig(), "minimal": minimal} {
+		t.Run(name, func(t *testing.T) {
+			stacks, err := hclStacks(cfg)
+			if err != nil {
+				t.Fatalf("hclStacks: %v", err)
+			}
+			for _, st := range stacks {
+				if err := st.template.Validate(); err != nil {
+					t.Errorf("stack %q builds a template CloudFormation would misinterpret: %v", st.title, err)
+				}
+			}
+		})
+	}
+}
+
+// The two logging constraints are the ones that guard real failures: CreateTrail
+// validates its S3 destination (and the trail Refs the bucket, not its policy),
+// and PutDeliveryChannel fails with no recorder — which nothing in that resource
+// references. Assert they survive as resource-level attributes, since inside
+// Properties they would read identically in the source and do nothing at deploy.
+func TestLoggingStack_OrderingConstraintsAreResourceLevel(t *testing.T) {
+	cfg := testConfig()
+	tmpl, err := logging.New(&cfg.Logging, &cfg.Org).Template()
+	if err != nil {
+		t.Fatalf("logging template: %v", err)
+	}
+
+	for logicalID, wantDep := range map[string]string{
+		"OrgTrail":              "AuditBucketPolicy",
+		"ConfigDeliveryChannel": "ConfigRecorder",
+	} {
+		res, ok := tmpl.Resources[logicalID].(map[string]any)
+		if !ok {
+			t.Fatalf("%s missing from the logging stack", logicalID)
+		}
+		if got := res["DependsOn"]; got != wantDep {
+			t.Errorf("%s: DependsOn = %#v, want the resource-level string %q", logicalID, got, wantDep)
 		}
 	}
 }

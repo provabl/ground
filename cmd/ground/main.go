@@ -250,17 +250,25 @@ func runDeploy(configPath, region string, dryRun bool) error {
 		fmt.Println("Dry run — no changes will be made.")
 		fmt.Printf("Organization: %s (region: %s)\n\n", cfg.Org.Name, cfg.Org.Region)
 
-		logJSON, _ := logTmpl.JSON()
-		secJSON, _ := secTmpl.JSON()
-		accountsJSON, _ := accountsTmpl.JSON()
-		identityJSON, _ := identityTmpl.JSON()
-		netJSON, _ := netTmpl.JSON()
-
-		fmt.Printf("Stack: %s\n%s\n\n", logStack.StackName(), logJSON)
-		fmt.Printf("Stack: %s\n%s\n\n", secStack.StackName(), secJSON)
-		fmt.Printf("Stack: %s\n%s\n\n", accountsStack.StackName(), accountsJSON)
-		fmt.Printf("Stack: %s\n%s\n\n", identityStack.StackName(), identityJSON)
-		fmt.Printf("Stack: %s\n%s\n\n", netStack.StackName(), netJSON)
+		// Report a serialisation failure rather than printing an empty stack body.
+		// JSON validates the template, and a dry run is exactly where an operator
+		// expects to be told the template is wrong.
+		for _, st := range []struct {
+			name string
+			tmpl *cfn.Template
+		}{
+			{logStack.StackName(), logTmpl},
+			{secStack.StackName(), secTmpl},
+			{accountsStack.StackName(), accountsTmpl},
+			{identityStack.StackName(), identityTmpl},
+			{netStack.StackName(), netTmpl},
+		} {
+			body, err := st.tmpl.JSON()
+			if err != nil {
+				return fmt.Errorf("stack %s: %w", st.name, err)
+			}
+			fmt.Printf("Stack: %s\n%s\n\n", st.name, body)
+		}
 		fmt.Println("Run without --dry-run to deploy these stacks to CloudFormation.")
 		return nil
 	}
