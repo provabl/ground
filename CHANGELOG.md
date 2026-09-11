@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ## [Unreleased]
 
+### Security
+
+- **Bump Go 1.26.5 → 1.26.6** to clear five `crypto/tls`, `net/url`, `net/http`, `encoding/xml`,
+  and `encoding/asn1` standard-library advisories (**GO-2026-6218**, **GO-2026-6090**,
+  **GO-2026-6088**, **GO-2026-5972**, **GO-2026-5026**), all fixed in go1.26.6. govulncheck
+  flagged them as symbol-reachable through ground's deploy path (the CloudFormation/IAM SDK
+  calls into `net/http`/`crypto/tls`) and the `probe` exec path. Toolchain bump only — no code
+  changes.
+
 ### Added
 
 - **`ground export-iac --format terraform|opentofu|cdk`** — the IaC export is now a
